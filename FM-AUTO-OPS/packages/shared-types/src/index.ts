@@ -18,6 +18,8 @@ export type WorkflowStatus =
 
 export type WorkflowType =
   | 'DAILY_PROCUREMENT'
+  | 'POS_AUTOMATION'
+  | 'SAP_AUTOMATION'
   | 'DOWNLOAD_INVENTORY'
   | 'DOWNLOAD_SALES'
   | 'SAP_LOGIN_CHECK'

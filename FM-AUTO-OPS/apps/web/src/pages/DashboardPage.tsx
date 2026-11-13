@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Server, ShoppingCart, Monitor, HardDrive, Play, Download, Wifi } from 'lucide-react';
+import { Server, ShoppingCart, Monitor, HardDrive, Play, Download, Wifi, KeyRound, CheckCircle2 } from 'lucide-react';
 import { useAgentStore } from '../store/agentStore';
 import StatusBadge from '../components/StatusBadge';
 import { formatDistanceToNow } from 'date-fns';
@@ -32,10 +32,6 @@ export default function DashboardPage() {
   }, []);
 
   const agentOnline = agentStatus?.isOnline ?? true;
-
-  const handleRunDailyProcurement = async () => {
-    await startWorkflow('DAILY_PROCUREMENT');
-  };
 
   return (
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
@@ -126,40 +122,136 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Primary CTA */}
-      <div className="bg-slate-900 rounded-2xl p-8 shadow-sm">
-        <div className="text-center space-y-4">
-          <div className="text-emerald-400 text-xs font-bold tracking-widest uppercase">One Click. Complete Automation.</div>
-          <button
-            onClick={handleRunDailyProcurement}
-            disabled={isLoading}
-            className="w-full max-w-lg mx-auto flex items-center justify-center gap-3 bg-emerald-500 hover:bg-emerald-400 active:scale-98 disabled:bg-slate-700 disabled:cursor-not-allowed text-slate-950 font-bold text-lg py-5 px-8 rounded-xl transition-all shadow-lg cursor-pointer"
-          >
-            <Play className="w-6 h-6 fill-current" />
-            RUN DAILY PROCUREMENT
-          </button>
-          <div className="text-slate-400 text-sm">
-            Automatically logs in, downloads Inventory & Sales Excel reports, validates, and organizes into D:\FM_AUTO_OPS
+      {/* 2 Dedicated Operational Feature Blocks: POS and SAP */}
+      <div className="grid grid-cols-2 gap-6">
+        {/* BLOCK 1: POS RPFO AUTOMATION */}
+        <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 rounded-2xl p-6 shadow-md border border-purple-900/50 flex flex-col justify-between space-y-5">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-500/20 border border-purple-500/40 rounded-xl flex items-center justify-center">
+                  <ShoppingCart className="w-5 h-5 text-purple-300" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">POS RPFO Automation</h2>
+                  <span className="text-xs text-purple-300/80 font-mono">http://172.16.1.200/</span>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-purple-900/60 border border-purple-700/50 text-purple-200 text-xs font-semibold rounded-full">
+                POS Riêng
+              </span>
+            </div>
+            <p className="text-slate-300 text-xs mt-3 leading-relaxed">
+              Tự động kết nối POS RPFO, tải báo cáo <strong>Bán hàng (Sales Transaction Detail)</strong> &amp; <strong>Tồn kho (Inventory Onhand)</strong>, xác thực tính toàn vẹn và phân loại lưu vào <code>D:\FM_AUTO_OPS\</code>.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <button
+              onClick={() => startWorkflow('POS_AUTOMATION')}
+              disabled={isLoading}
+              className="w-full flex items-center justify-center gap-2.5 bg-purple-600 hover:bg-purple-500 active:scale-98 disabled:bg-slate-800 disabled:cursor-not-allowed text-white font-bold text-sm py-3.5 px-5 rounded-xl transition-all shadow-md cursor-pointer"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              CHẠY POS TỰ ĐỘNG (RUN POS)
+            </button>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => startWorkflow('DOWNLOAD_SALES')}
+                disabled={isLoading}
+                className="flex items-center justify-center gap-2 bg-slate-800/80 hover:bg-slate-800 border border-purple-900/50 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-purple-400" />
+                Tải Sales Detail
+              </button>
+              <button
+                onClick={() => startWorkflow('DOWNLOAD_INVENTORY')}
+                disabled={isLoading}
+                className="flex items-center justify-center gap-2 bg-slate-800/80 hover:bg-slate-800 border border-purple-900/50 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-purple-400" />
+                Tải Inventory Onhand
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Secondary actions */}
-        <div className="mt-8 flex justify-center gap-3">
-          {[
-            { label: 'Download Inventory', icon: Download, type: 'DOWNLOAD_INVENTORY' },
-            { label: 'Download Sales', icon: Download, type: 'DOWNLOAD_SALES' },
-            { label: 'Test Connections', icon: Wifi, type: 'CONNECTION_TEST' },
-          ].map(({ label, icon: Icon, type }) => (
+        {/* BLOCK 2: SAP BUSINESS ONE AUTOMATION */}
+        <div className="bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 rounded-2xl p-6 shadow-md border border-blue-900/50 flex flex-col justify-between space-y-5">
+          <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-500/20 border border-blue-500/40 rounded-xl flex items-center justify-center">
+                  <Server className="w-5 h-5 text-blue-300" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">SAP Business One Automation</h2>
+                  <span className="text-xs text-blue-300/80 font-mono">172.16.1.210:8100 → SLD 172.16.0.201</span>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-blue-900/60 border border-blue-700/50 text-blue-200 text-xs font-semibold rounded-full">
+                SAP Riêng
+              </span>
+            </div>
+            <p className="text-slate-300 text-xs mt-3 leading-relaxed">
+              Tự động mở SAP Web Client, điền form đăng nhập SLD (Server, Company Database, User ID, Password), xử lý khôi phục phiên và bảo vệ chống đăng nhập trùng tài khoản.
+            </p>
+          </div>
+
+          <div className="space-y-3">
             <button
-              key={type}
-              onClick={() => startWorkflow(type)}
+              onClick={() => startWorkflow('SAP_AUTOMATION')}
               disabled={isLoading}
-              className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors cursor-pointer"
+              className="w-full flex items-center justify-center gap-2.5 bg-blue-600 hover:bg-blue-500 active:scale-98 disabled:bg-slate-800 disabled:cursor-not-allowed text-white font-bold text-sm py-3.5 px-5 rounded-xl transition-all shadow-md cursor-pointer"
             >
-              <Icon className="w-4 h-4" />
-              {label}
+              <Play className="w-4 h-4 fill-current" />
+              CHẠY SAP TỰ ĐỘNG (RUN SAP)
             </button>
-          ))}
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => startWorkflow('SAP_LOGIN_CHECK')}
+                disabled={isLoading}
+                className="flex items-center justify-center gap-2 bg-slate-800/80 hover:bg-slate-800 border border-blue-900/50 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                Đăng nhập SAP SLD
+              </button>
+              <button
+                onClick={() => checkNetwork()}
+                disabled={isLoading}
+                className="flex items-center justify-center gap-2 bg-slate-800/80 hover:bg-slate-800 border border-blue-900/50 text-slate-200 text-xs font-medium py-2 px-3 rounded-lg transition-colors cursor-pointer"
+              >
+                <Wifi className="w-3.5 h-3.5 text-blue-400" />
+                Kiểm tra Kết nối
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Primary CTA (All in One: Daily Procurement) */}
+      <div className="bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-800">
+        <div className="flex items-center justify-between">
+          <div className="space-y-1">
+            <div className="text-emerald-400 text-xs font-bold tracking-widest uppercase">
+              Chạy Toàn Trình (All-in-One Automation)
+            </div>
+            <h3 className="text-lg font-bold text-white">Chạy Toàn Bộ Quy Trình Mua Hàng Hằng Ngày</h3>
+            <p className="text-slate-400 text-xs">
+              Tự động hóa hoàn toàn cả POS RPFO (Bán hàng + Tồn kho) và SAP Business One chỉ với 1 click duy nhất.
+            </p>
+          </div>
+
+          <button
+            onClick={() => startWorkflow('DAILY_PROCUREMENT')}
+            disabled={isLoading}
+            className="flex items-center gap-3 bg-emerald-500 hover:bg-emerald-400 active:scale-98 disabled:bg-slate-700 disabled:cursor-not-allowed text-slate-950 font-bold text-base py-3.5 px-7 rounded-xl transition-all shadow-lg cursor-pointer"
+          >
+            <Play className="w-5 h-5 fill-current" />
+            RUN DAILY PROCUREMENT
+          </button>
         </div>
       </div>
 
@@ -181,14 +273,18 @@ export default function DashboardPage() {
                 <th className="px-6 py-3 text-left font-medium">Status</th>
               </tr>
             </thead>
-            <tbody>
-              {recentRuns.slice(0, 5).map((run) => (
-                <tr key={run.id} className="border-b border-slate-50 hover:bg-slate-50/50">
-                  <td className="px-6 py-3 text-sm font-medium text-slate-800">{run.workflowType.replace(/_/g, ' ')}</td>
-                  <td className="px-6 py-3 text-sm text-slate-500">{formatDistanceToNow(new Date(run.startedAt), { addSuffix: true })}</td>
-                  <td className="px-6 py-3 text-sm text-slate-500">{run.durationMs ? `${Math.round(run.durationMs / 1000)}s` : '—'}</td>
-                  <td className="px-6 py-3">
-                    <StatusBadge status={getWorkflowStatusBadge(run.status)} label={run.status.replace(/_/g, ' ')} />
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {recentRuns.map((run) => (
+                <tr key={run.id} className="hover:bg-slate-50">
+                  <td className="px-6 py-4 font-medium text-slate-900">{run.workflowType}</td>
+                  <td className="px-6 py-4 text-slate-500 text-xs">
+                    {formatDistanceToNow(new Date(run.startedAt), { addSuffix: true })}
+                  </td>
+                  <td className="px-6 py-4 text-slate-500 text-xs">
+                    {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <StatusBadge status={getWorkflowStatusBadge(run.status)} label={run.status} />
                   </td>
                 </tr>
               ))}

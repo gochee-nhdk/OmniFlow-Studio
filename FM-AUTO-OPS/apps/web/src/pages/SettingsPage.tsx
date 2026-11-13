@@ -68,7 +68,7 @@ export default function SettingsPage() {
       });
 
       // Save SLD server & company in settings
-      const current = (await invoke<Record<string, unknown>>('settings:get')).data || {};
+      const current = (await invoke<Record<string, unknown>>('settings:get')) || {};
       await invoke('settings:set', {
         ...current,
         sapServer,
@@ -93,7 +93,7 @@ export default function SettingsPage() {
         url: 'http://172.16.1.200/',
       });
 
-      const current = (await invoke<Record<string, unknown>>('settings:get')).data || {};
+      const current = (await invoke<Record<string, unknown>>('settings:get')) || {};
       await invoke('settings:set', {
         ...current,
         posUser,
