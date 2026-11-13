@@ -23,6 +23,8 @@ export interface POSSessionState {
 
 export interface InventoryDownloadOptions {
   storeFilter?: string;
+  slocFilter?: string;
+  itemFilter?: string;
   outputDir?: string;
   fileNameTemplate?: string;
 }
@@ -149,7 +151,7 @@ export class POSAdapter {
       if (options.fromDate) await this.setDateFilter(page, 'from', options.fromDate);
       if (options.toDate) await this.setDateFilter(page, 'to', options.toDate);
       if (options.storeFilter && options.storeFilter !== 'All') {
-        await this.setStoreFilter(page, options.storeFilter, 'sales');
+        await this.setStoreFilter(page, options.storeFilter);
       }
     } catch (e) {
       console.warn('Date/Store filter setting note:', (e as Error).message);
@@ -253,6 +255,11 @@ export class POSAdapter {
       { timeout: 35000 }
     ).catch(() => null);
 
+    // Apply store filter on page if provided
+    if (options.storeFilter && options.storeFilter !== 'All') {
+      await this.setStoreFilter(page, options.storeFilter);
+    }
+
     // Click Search
     const searchBtn = page.locator('button:has-text("Search"), dx-button[icon="search"], :text("Search")').first();
     if (await searchBtn.isVisible().catch(() => false)) {
@@ -269,7 +276,34 @@ export class POSAdapter {
     if (invResp) {
       try {
         const jsonData = await invResp.json();
-        const items = Array.isArray(jsonData) ? jsonData : (jsonData?.data || []);
+        let items: any[] = Array.isArray(jsonData) ? jsonData : (jsonData?.data || []);
+
+        // Apply Store filter
+        if (options.storeFilter && options.storeFilter !== 'All') {
+          const sf = options.storeFilter.trim().toLowerCase();
+          items = items.filter((it: any) =>
+            String(it.storeId || '').toLowerCase().includes(sf) ||
+            String(it.storeName || '').toLowerCase().includes(sf)
+          );
+        }
+
+        // Apply Sloc / Kho filter
+        if (options.slocFilter && options.slocFilter.trim()) {
+          const sloc = options.slocFilter.trim().toLowerCase();
+          items = items.filter((it: any) =>
+            String(it.slocId || '').toLowerCase().includes(sloc) ||
+            String(it.whsName || '').toLowerCase().includes(sloc)
+          );
+        }
+
+        // Apply Item / Sản phẩm filter
+        if (options.itemFilter && options.itemFilter.trim()) {
+          const item = options.itemFilter.trim().toLowerCase();
+          items = items.filter((it: any) =>
+            String(it.itemCode || '').toLowerCase().includes(item) ||
+            String(it.itemName || '').toLowerCase().includes(item)
+          );
+        }
         
         // Build Excel Workbook
         const workbook = new ExcelJS.Workbook();
@@ -310,18 +344,37 @@ export class POSAdapter {
   }
 
   private async setDateFilter(page: Page, field: 'from' | 'to', isoDate: string): Promise<void> {
-    const input = page.locator(field === 'from' ? 'input[name*="from" i], input[placeholder*="from" i], input:nth-of-type(1)' : 'input[name*="to" i], input[placeholder*="to" i], input:nth-of-type(2)').first();
-    if (await input.isVisible().catch(() => false)) {
+    try {
       const date = new Date(isoDate);
       const formatted = format(date, 'dd/MM/yyyy');
-      await input.fill(formatted).catch(() => null);
+      
+      const dateBox = page.locator('dx-date-box').nth(field === 'from' ? 0 : 1);
+      if (await dateBox.isVisible().catch(() => false)) {
+        const input = dateBox.locator('input').first();
+        await input.click();
+        await input.fill(formatted);
+        await input.press('Enter');
+        await page.waitForTimeout(500);
+      }
+    } catch (e) {
+      console.warn(`setDateFilter error for ${field}:`, (e as Error).message);
     }
   }
 
-  private async setStoreFilter(page: Page, storeFilter: string, _context: 'inventory' | 'sales'): Promise<void> {
-    const dropdown = page.locator('select, .dx-selectbox').first();
-    if (await dropdown.isVisible().catch(() => false)) {
-      await dropdown.selectOption({ label: storeFilter }).catch(() => null);
+  private async setStoreFilter(page: Page, storeFilter: string): Promise<void> {
+    if (!storeFilter || storeFilter === 'All') return;
+    try {
+      const selectBox = page.locator('dx-select-box').first();
+      if (await selectBox.isVisible().catch(() => false)) {
+        await selectBox.click();
+        await page.waitForTimeout(500);
+        const option = page.locator(`.dx-item:has-text("${storeFilter}")`).first();
+        if (await option.isVisible().catch(() => false)) {
+          await option.click();
+        }
+      }
+    } catch (e) {
+      console.warn('setStoreFilter note:', (e as Error).message);
     }
   }
 

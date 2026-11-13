@@ -49,10 +49,25 @@ function registerAgentHandlers(): void {
 }
 
 function registerWorkflowHandlers(): void {
-  ipcMain.handle('workflow:start', async (_event, payload: { type: string }) => {
+  ipcMain.handle('workflow:start', async (_event, payload: {
+    type: string;
+    options?: {
+      includeSales?: boolean;
+      includeInventory?: boolean;
+      fromDate?: string;
+      toDate?: string;
+      storeFilter?: string;
+      inventoryStoreFilter?: string;
+      inventorySlocFilter?: string;
+      inventoryItemFilter?: string;
+      sapServer?: string;
+      sapCompany?: string;
+    };
+  }) => {
     if (!db || !browserManager) throw new Error('Database or BrowserManager not ready');
 
     const run = db.createWorkflowRun(payload.type);
+    const opts = payload.options || {};
 
     const broadcastStep = (stepName: string, status: string, index: number, errorMessage?: string) => {
       try {
@@ -87,15 +102,27 @@ function registerWorkflowHandlers(): void {
           const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
           const posCreds = posMeta && posPassword ? { username: String(posMeta.username || ''), password: posPassword } : undefined;
 
+          const doSales = payload.type === 'DOWNLOAD_SALES' ||
+            (payload.type === 'POS_AUTOMATION' && opts.includeSales !== false) ||
+            (payload.type === 'DAILY_PROCUREMENT' && opts.includeSales !== false);
+
+          const doInventory = payload.type === 'DOWNLOAD_INVENTORY' ||
+            (payload.type === 'POS_AUTOMATION' && opts.includeInventory !== false) ||
+            (payload.type === 'DAILY_PROCUREMENT' && opts.includeInventory !== false);
+
           // Download Sales Transaction Detail
-          if (['DAILY_PROCUREMENT', 'POS_AUTOMATION', 'DOWNLOAD_SALES'].includes(payload.type)) {
+          if (doSales) {
             const step2 = db.createWorkflowStep(run.id, 'POS: Download Sales Transaction Detail', 2);
-            broadcastStep('POS: Tải Sales Transaction Detail', 'RUNNING', 2);
             const dateRange = POSAdapter.calculateDateRange('TODAY');
+            const fromD = opts.fromDate || dateRange.from;
+            const toD = opts.toDate || dateRange.to;
+            const storeF = opts.storeFilter || 'All';
+
+            broadcastStep(`POS: Tải Sales Detail (${fromD} → ${toD})`, 'RUNNING', 2);
             const result = await posAdapter.downloadSalesTransactionDetail({
-              fromDate: dateRange.from,
-              toDate: dateRange.to,
-              storeFilter: 'All',
+              fromDate: fromD,
+              toDate: toD,
+              storeFilter: storeF,
               outputDir: 'D:\\FM_AUTO_OPS\\Sales',
               fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
             }, posCreds);
@@ -122,19 +149,22 @@ function registerWorkflowHandlers(): void {
 
             db.updateWorkflowStep(step2.id, validation.valid ? 'SUCCESS' : 'FAILED');
             broadcastStep(
-              `POS: Tải Sales Detail (${validation.rowCount || 0} dòng)`,
+              `POS: Tải Sales Detail (${validation.rowCount || 0} dòng, ${fromD}→${toD})`,
               validation.valid ? 'SUCCESS' : 'FAILED',
               2
             );
           }
 
           // Download Inventory Onhand
-          if (['DAILY_PROCUREMENT', 'POS_AUTOMATION', 'DOWNLOAD_INVENTORY'].includes(payload.type)) {
+          if (doInventory) {
             const stepInv = db.createWorkflowStep(run.id, 'POS: Download Inventory Onhand', 3);
-            broadcastStep('POS: Tải Inventory Onhand', 'RUNNING', 3);
+            const invStore = opts.inventoryStoreFilter || 'All';
+            broadcastStep(`POS: Tải Inventory Onhand (Kho: ${invStore})`, 'RUNNING', 3);
             try {
               const invResult = await posAdapter.downloadInventoryOnhand({
-                storeFilter: 'All',
+                storeFilter: invStore,
+                slocFilter: opts.inventorySlocFilter,
+                itemFilter: opts.inventoryItemFilter,
                 outputDir: 'D:\\FM_AUTO_OPS\\Inventory',
                 fileNameTemplate: 'Inventory_Onhand_{TIMESTAMP}.xlsx',
               }, posCreds);
@@ -184,6 +214,9 @@ function registerWorkflowHandlers(): void {
           }
 
           if (sapMeta && sapPassword) {
+            const targetServer = opts.sapServer || appSettings.sapServer || 'SBO@172.16.0.201:30013';
+            const targetCompany = opts.sapCompany || appSettings.sapCompany || 'Công ty TNHH Thương Mại LARIA (FM_PRO)';
+
             const sapAdapter = new SAPAdapter(
               browserManager,
               'https://172.16.1.210:8100/dispatcher/',
@@ -197,8 +230,8 @@ function registerWorkflowHandlers(): void {
             const loginRes = await sapAdapter.login({
               username: String(sapMeta.username || ''),
               password: sapPassword,
-              server: appSettings.sapServer || 'SBO@172.16.0.201:30013',
-              company: appSettings.sapCompany || 'Công ty TNHH Thương Mại LARIA (FM_PRO)',
+              server: targetServer,
+              company: targetCompany,
             });
 
             db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED');
