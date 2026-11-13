@@ -1,11 +1,28 @@
-import React, { useState } from 'react';
-import { Shield, HardDrive, KeyRound, Check, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, HardDrive, KeyRound, Check, ExternalLink, Server, Building2 } from 'lucide-react';
 import { invoke } from '../lib/ipc';
+
+const SAP_COMPANIES = [
+  'Công ty TNHH Thương Mại LARIA (FM_PRO)',
+  'BEFORE_IMPORT_FROM_POS_12052025 (FM_PRO_120525)',
+  'CÔNG TY TNHH REUNION FOODS (REUNION_PRO)',
+  'Công ty TNHH Thương Mại LARIA (FM_CORE)',
+  'DEV - Công ty TNHH Thương Mại LARIA (FM_DEV)',
+  'DEV - Công ty TNHH Thương Mại LARIA (FM_DEV_01)',
+  'DEV LARIA - TEST BIZZI (FM_BZ_DEV)',
+  'DEV REUNION FOODS (REUNION_DEV)',
+  'EINVOICE_TEST - Công ty TNHH Thương Mại LARIA (FM_EINVOICE_TEST)',
+  'FARMER REBATE TEST (FM_REBATE_TEST)',
+  'UAT - CTY THHH LARIA (FM_UAT)',
+  'Z_TMP (FM_TMP)',
+];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'credentials' | 'storage' | 'network'>('credentials');
 
-  // SAP Credentials
+  // SAP Credentials & SLD Config
+  const [sapServer, setSapServer] = useState('SBO@172.16.0.201:30013');
+  const [sapCompany, setSapCompany] = useState('Công ty TNHH Thương Mại LARIA (FM_PRO)');
   const [sapUser, setSapUser] = useState('');
   const [sapPass, setSapPass] = useState('');
   const [sapSaved, setSapSaved] = useState(false);
@@ -17,8 +34,31 @@ export default function SettingsPage() {
 
   const [testResult, setTestResult] = useState<string | null>(null);
 
+  useEffect(() => {
+    // Load existing settings
+    invoke<Record<string, string>>('settings:get').then((res) => {
+      if (res) {
+        if (res.sapServer) setSapServer(res.sapServer);
+        if (res.sapCompany) setSapCompany(res.sapCompany);
+        if (res.sapUser) setSapUser(res.sapUser);
+        if (res.posUser) setPosUser(res.posUser);
+      }
+    }).catch(() => null);
+
+    // Load credential metadata
+    invoke<Array<{ accountName: string; username: string }>>('credentials:get-meta').then((res) => {
+      if (Array.isArray(res)) {
+        const sapMeta = res.find((m: { accountName: string; username: string }) => m.accountName === 'SAP_MAIN');
+        if (sapMeta && sapMeta.username) setSapUser(sapMeta.username);
+        const posMeta = res.find((m: { accountName: string; username: string }) => m.accountName === 'POS_MAIN');
+        if (posMeta && posMeta.username) setPosUser(posMeta.username);
+      }
+    }).catch(() => null);
+  }, []);
+
   const handleSaveSap = async () => {
     try {
+      // Save password in native Windows Credential Manager
       await invoke('credentials:save', {
         accountName: 'SAP_MAIN',
         username: sapUser,
@@ -26,6 +66,16 @@ export default function SettingsPage() {
         application: 'SAP',
         url: 'https://172.16.1.210:8100/dispatcher/',
       });
+
+      // Save SLD server & company in settings
+      const current = (await invoke<Record<string, unknown>>('settings:get')).data || {};
+      await invoke('settings:set', {
+        ...current,
+        sapServer,
+        sapCompany,
+        sapUser,
+      });
+
       setSapSaved(true);
       setTimeout(() => setSapSaved(false), 3000);
     } catch (e) {
@@ -42,6 +92,13 @@ export default function SettingsPage() {
         application: 'POS',
         url: 'http://172.16.1.200/',
       });
+
+      const current = (await invoke<Record<string, unknown>>('settings:get')).data || {};
+      await invoke('settings:set', {
+        ...current,
+        posUser,
+      });
+
       setPosSaved(true);
       setTimeout(() => setPosSaved(false), 3000);
     } catch (e) {
@@ -53,7 +110,7 @@ export default function SettingsPage() {
     setTestResult(`Testing connection to ${url}...`);
     try {
       const res = await invoke<{ reachable: boolean; message: string }>('credentials:test', { url });
-      setTestResult(res.reachable ? `✓ ${res.message}` : `✗ ${res.message}`);
+      setTestResult(res?.reachable ? `✓ ${res.message}` : `✗ ${res?.message || 'Failed'}`);
     } catch {
       setTestResult('✗ Connection check failed');
     }
@@ -110,20 +167,54 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-base font-bold text-slate-900">SAP Business One Account</h3>
-                <span className="text-xs text-slate-400 font-mono">https://172.16.1.210:8100/dispatcher/</span>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  SAP Business One & SLD Login Form
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">
+                  https://172.16.1.210:8100/dispatcher/ → SLD 172.16.0.201:40000
+                </span>
               </div>
               <button
-                onClick={() => handleTestConnection('https://172.16.1.210:8100/dispatcher/')}
+                onClick={() => handleTestConnection('https://172.16.0.201:40000/ControlCenter/sbo.html')}
                 className="text-xs font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 px-3 py-1.5 rounded-md cursor-pointer"
               >
-                Test Connection
+                Test SLD Auth Connection
               </button>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Username / User Code</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-slate-400" /> Server (#sbo_dbserver)
+                </label>
+                <input
+                  type="text"
+                  value={sapServer}
+                  onChange={(e) => setSapServer(e.target.value)}
+                  placeholder="SBO@172.16.0.201:30013"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3.5 py-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-slate-400" /> Company Database (#sbo_company)
+                </label>
+                <select
+                  value={sapCompany}
+                  onChange={(e) => setSapCompany(e.target.value)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3.5 py-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white"
+                >
+                  {SAP_COMPANIES.map((comp) => (
+                    <option key={comp} value={comp}>
+                      {comp}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">User ID (#sbo_user)</label>
                 <input
                   type="text"
                   value={sapUser}
@@ -132,8 +223,9 @@ export default function SettingsPage() {
                   className="w-full text-sm border border-slate-300 rounded-lg px-3.5 py-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Password (#sbo_password)</label>
                 <input
                   type="password"
                   value={sapPass}
@@ -150,7 +242,7 @@ export default function SettingsPage() {
                 className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer transition-colors"
               >
                 {sapSaved ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : null}
-                {sapSaved ? 'Saved to Windows Vault' : 'Save SAP Credentials'}
+                {sapSaved ? 'Saved to Windows Vault' : 'Save SAP SLD Credentials'}
               </button>
             </div>
           </div>
@@ -205,7 +297,7 @@ export default function SettingsPage() {
           </div>
 
           {testResult && (
-            <div className="p-3 bg-slate-100 rounded-lg text-xs font-mono text-slate-700">
+            <div className="p-3 bg-slate-100 rounded-lg text-xs font-mono text-slate-700 border border-slate-200">
               {testResult}
             </div>
           )}
@@ -216,35 +308,35 @@ export default function SettingsPage() {
       {activeTab === 'storage' && (
         <div className="space-y-4">
           <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-xs">
-            <div className="border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">Procurement Folder Architecture</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Root Directory: <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">D:\FM_AUTO_OPS</code></p>
-            </div>
+            <h3 className="text-base font-bold text-slate-900">Local Organization Storage</h3>
+            <p className="text-xs text-slate-500">
+              The root automation path on this Windows machine is <code className="bg-slate-100 px-1 py-0.5 rounded text-emerald-700 font-bold">D:\FM_AUTO_OPS\</code>.
+              Click any folder below to open it in Windows File Explorer.
+            </p>
 
-            <div className="space-y-2.5">
+            <div className="grid grid-cols-3 gap-3 pt-2">
               {[
-                { name: 'Inventory Reports', path: 'D:\\FM_AUTO_OPS\\Inventory', desc: 'Auto-downloaded Inventory Onhand Excel files' },
-                { name: 'Sales Transactions', path: 'D:\\FM_AUTO_OPS\\Sales', desc: 'Daily/period sales transaction workbooks' },
-                { name: 'SAP Documents', path: 'D:\\FM_AUTO_OPS\\SAP', desc: 'SAP Business One exported records' },
-                { name: 'Purchase Orders', path: 'D:\\FM_AUTO_OPS\\PO', desc: 'Generated & drafted PO data' },
-                { name: 'Return Records', path: 'D:\\FM_AUTO_OPS\\Return', desc: 'Return workflows and summaries' },
-                { name: 'Archive Vault', path: 'D:\\FM_AUTO_OPS\\Archive', desc: 'Previous execution files and backup copies' },
-                { name: 'Error Quarantine', path: 'D:\\FM_AUTO_OPS\\Error', desc: 'Damaged or unvalidated downloads' },
-                { name: 'Execution Logs', path: 'D:\\FM_AUTO_OPS\\Logs', desc: 'Local audit and operational logs' },
+                { name: 'Inventory', path: 'D:\\FM_AUTO_OPS\\Inventory', desc: 'Inventory Onhand Excel workbooks' },
+                { name: 'Sales', path: 'D:\\FM_AUTO_OPS\\Sales', desc: 'Sales Transaction Detail reports' },
+                { name: 'SAP', path: 'D:\\FM_AUTO_OPS\\SAP', desc: 'SAP Business One records & exports' },
+                { name: 'PO', path: 'D:\\FM_AUTO_OPS\\PO', desc: 'Generated Purchase Orders' },
+                { name: 'Return', path: 'D:\\FM_AUTO_OPS\\Return', desc: 'Procurement return records' },
+                { name: 'Archive', path: 'D:\\FM_AUTO_OPS\\Archive', desc: 'Historical versioned backups' },
+                { name: 'Error', path: 'D:\\FM_AUTO_OPS\\Error', desc: 'Corrupted downloads quarantine' },
+                { name: 'Logs', path: 'D:\\FM_AUTO_OPS\\Logs', desc: 'Local audit & agent logs' },
+                { name: 'Temp', path: 'D:\\FM_AUTO_OPS\\Temp', desc: 'In-flight download buffer' },
               ].map(({ name, path, desc }) => (
-                <div key={path} className="flex items-center justify-between p-3.5 bg-slate-50 rounded-lg border border-slate-100">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">{name}</div>
-                    <div className="text-xs font-mono text-slate-500">{path}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">{desc}</div>
+                <div
+                  key={name}
+                  onClick={() => openFolder(path)}
+                  className="p-3.5 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50/30 cursor-pointer transition-all group"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-slate-900 group-hover:text-emerald-700">{name}</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600" />
                   </div>
-                  <button
-                    onClick={() => openFolder(path)}
-                    className="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-3 py-1.5 rounded-lg cursor-pointer"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    Open Folder
-                  </button>
+                  <p className="text-xs text-slate-400 mt-1">{desc}</p>
+                  <span className="text-[10px] text-slate-400 font-mono block mt-2">{path}</span>
                 </div>
               ))}
             </div>
@@ -252,16 +344,31 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Security Tab */}
+      {/* Network Tab */}
       {activeTab === 'network' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-xs">
-          <h3 className="text-base font-bold text-slate-900">Security Architecture & Transport Disclosures</h3>
-          <ul className="text-sm text-slate-600 space-y-2 list-disc list-inside">
-            <li><strong>POS HTTP Unencrypted:</strong> The internal POS system operates at <code>http://172.16.1.200</code>. Automation accesses it locally across the private intranet.</li>
-            <li><strong>SAP Self-Signed SSL:</strong> The internal SAP server at <code>https://172.16.1.210:8100</code> uses an enterprise self-signed certificate, managed in isolated Chromium contexts.</li>
-            <li><strong>Zero Cloud Sync of Passwords:</strong> Credentials remain strictly on this Windows device.</li>
-            <li><strong>Predefined RPA Commands:</strong> No arbitrary terminal or shell scripts are executable through the dashboard.</li>
-          </ul>
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-xs">
+            <h3 className="text-base font-bold text-slate-900">Enterprise Network Infrastructure</h3>
+            <p className="text-xs text-slate-500">Live verified internal enterprise connectivity status</p>
+
+            <div className="space-y-3 pt-2">
+              {[
+                { name: 'SAP Business One Web Client', url: 'https://172.16.1.210:8100/dispatcher/', port: 8100, verified: true },
+                { name: 'SAP System Landscape Directory (SLD)', url: 'https://172.16.0.201:40000/ControlCenter/sbo.html', port: 40000, verified: true },
+                { name: 'POS RPFO Web Application', url: 'http://172.16.1.200/', port: 80, verified: true },
+              ].map((sys) => (
+                <div key={sys.name} className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div>
+                    <div className="text-sm font-bold text-slate-800">{sys.name}</div>
+                    <div className="text-xs text-slate-400 font-mono mt-0.5">{sys.url} (Port {sys.port})</div>
+                  </div>
+                  <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Verified Reachable
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

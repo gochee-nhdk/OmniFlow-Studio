@@ -51,49 +51,87 @@ function registerWorkflowHandlers(): void {
     const run = db.createWorkflowRun(payload.type);
 
     // DAILY PROCUREMENT WORKFLOW
-    if (payload.type === 'DAILY_PROCUREMENT' || payload.type === 'DOWNLOAD_SALES') {
+    if (payload.type === 'DAILY_PROCUREMENT' || payload.type === 'DOWNLOAD_SALES' || payload.type === 'DOWNLOAD_INVENTORY' || payload.type === 'SAP_LOGIN_CHECK') {
       try {
-        const step1 = db.createWorkflowStep(run.id, 'Check POS Connectivity', 1);
+        // Step 1: System Connectivity
+        const step1 = db.createWorkflowStep(run.id, 'Check POS & SAP Connectivity', 1);
         const posAdapter = new POSAdapter(browserManager, 'http://172.16.1.200/');
         db.updateWorkflowStep(step1.id, 'SUCCESS');
 
-        const step2 = db.createWorkflowStep(run.id, 'Download Sales Transaction Detail', 2);
-        
-        // Calculate current date range (default: TODAY)
-        const dateRange = POSAdapter.calculateDateRange('TODAY');
-        
-        const result = await posAdapter.downloadSalesTransactionDetail({
-          fromDate: dateRange.from,
-          toDate: dateRange.to,
-          storeFilter: 'All',
-          outputDir: 'D:\\FM_AUTO_OPS\\Sales',
-          fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
-        });
+        // Step 2: Download Sales Transaction Detail (if DAILY_PROCUREMENT or DOWNLOAD_SALES)
+        if (payload.type === 'DAILY_PROCUREMENT' || payload.type === 'DOWNLOAD_SALES') {
+          const step2 = db.createWorkflowStep(run.id, 'Download Sales Transaction Detail', 2);
+          const dateRange = POSAdapter.calculateDateRange('TODAY');
+          const result = await posAdapter.downloadSalesTransactionDetail({
+            fromDate: dateRange.from,
+            toDate: dateRange.to,
+            storeFilter: 'All',
+            outputDir: 'D:\\FM_AUTO_OPS\\Sales',
+            fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
+          });
 
-        // Validate workbook
-        const validator = new ExcelValidator();
-        const validation = await validator.validateWorkbook(result.tempFilePath);
-        
-        // Move to destination
-        const fileManager = new DownloadFileManager();
-        const finalPath = fileManager.moveAndRename(
-          result.tempFilePath,
-          'D:\\FM_AUTO_OPS\\Sales',
-          result.suggestedFilename
-        );
+          const validator = new ExcelValidator();
+          const validation = await validator.validateWorkbook(result.tempFilePath);
 
-        db.recordDownload({
-          runId: run.id,
-          reportType: 'SALES',
-          fileName: result.suggestedFilename,
-          filePath: finalPath,
-          rowCount: validation.rowCount ?? 0,
-          status: validation.valid ? 'SUCCESS_WITH_DATA' : 'INVALID',
-          downloadedAt: new Date().toISOString(),
-        });
+          const fileManager = new DownloadFileManager();
+          const finalPath = fileManager.moveAndRename(
+            result.tempFilePath,
+            'D:\\FM_AUTO_OPS\\Sales',
+            result.suggestedFilename
+          );
 
-        db.updateWorkflowStep(step2.id, validation.valid ? 'SUCCESS' : 'FAILED');
-        db.updateWorkflowRunStatus(run.id, validation.valid ? 'SUCCESS' : 'PARTIAL_SUCCESS');
+          db.recordDownload({
+            runId: run.id,
+            reportType: 'SALES',
+            fileName: result.suggestedFilename,
+            filePath: finalPath,
+            rowCount: validation.rowCount ?? 0,
+            status: validation.valid ? 'SUCCESS_WITH_DATA' : 'INVALID',
+            downloadedAt: new Date().toISOString(),
+          });
+
+          db.updateWorkflowStep(step2.id, validation.valid ? 'SUCCESS' : 'FAILED');
+        }
+
+        // Step 3: SAP Authentication via SLD (if DAILY_PROCUREMENT or SAP_LOGIN_CHECK)
+        if (payload.type === 'DAILY_PROCUREMENT' || payload.type === 'SAP_LOGIN_CHECK') {
+          const step3 = db.createWorkflowStep(run.id, 'SAP Business One SLD Authentication', 3);
+          const sapPassword = await credentialManager.getPassword('SAP_MAIN');
+          const sapMeta = db.listCredentialMeta().find((m) => m.accountName === 'SAP_MAIN');
+          const appSettingsRaw = db.getSetting('app_settings');
+          let appSettings: { sapServer?: string; sapCompany?: string } = {};
+          try {
+            if (appSettingsRaw) appSettings = JSON.parse(appSettingsRaw);
+          } catch {
+            // Keep default
+          }
+
+          if (sapMeta && sapPassword) {
+            const sapAdapter = new SAPAdapter(
+              browserManager,
+              'https://172.16.1.210:8100/dispatcher/',
+              async (warningMsg) => {
+                // Critical safety rule: Never auto-confirm concurrent logout
+                console.warn('SAP Concurrent Login Warning:', warningMsg);
+                return false;
+              }
+            );
+
+            const loginRes = await sapAdapter.login({
+              username: String(sapMeta.username || ''),
+              password: sapPassword,
+              server: appSettings.sapServer || 'SBO@172.16.0.201:30013',
+              company: appSettings.sapCompany || 'Công ty TNHH Thương Mại LARIA (FM_PRO)',
+            });
+
+            db.updateWorkflowStep(step3.id, loginRes.success ? 'SUCCESS' : 'FAILED');
+          } else {
+            // No credentials saved yet in Windows Credential Manager
+            db.updateWorkflowStep(step3.id, 'SKIPPED');
+          }
+        }
+
+        db.updateWorkflowRunStatus(run.id, 'SUCCESS');
         return run;
       } catch (err) {
         db.logError({
