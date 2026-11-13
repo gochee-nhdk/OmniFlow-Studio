@@ -35,13 +35,14 @@ function createWindow(): void {
     show: false,
   });
 
-  if (process.env['NODE_ENV'] === 'development' || !app.isPackaged) {
+  const localHtmlPath = join(__dirname, '../../../web/dist/index.html');
+
+  if (process.env['VITE_DEV'] === 'true') {
     mainWindow.loadURL('http://localhost:5173').catch(() => {
-      // If dev server isn't running yet, fallback
-      mainWindow?.loadFile(join(__dirname, '../../../web/dist/index.html')).catch(() => null);
+      mainWindow?.loadFile(localHtmlPath).catch(() => null);
     });
   } else {
-    mainWindow.loadFile(join(__dirname, '../../../web/dist/index.html'));
+    mainWindow.loadFile(localHtmlPath);
   }
 
   mainWindow.once('ready-to-show', () => {
