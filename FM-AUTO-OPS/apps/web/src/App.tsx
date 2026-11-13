@@ -16,6 +16,7 @@ export default function App() {
         <Route path="history" element={<HistoryPage />} />
         <Route path="errors" element={<ErrorCenterPage />} />
         <Route path="settings/*" element={<SettingsPage />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
   );

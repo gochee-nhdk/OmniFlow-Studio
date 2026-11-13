@@ -63,6 +63,14 @@ function createWindow(): void {
   const localHtmlPath = join(__dirname, '../../../web/dist/index.html');
   log(`Loading HTML from: ${localHtmlPath}`);
 
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    log(`RENDERER_CONSOLE [lvl=${level}] ${message} (${sourceId}:${line})`);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log(`RENDERER_LOAD_FAIL [code=${errorCode}] ${errorDescription} url=${validatedURL}`);
+  });
+
   if (process.env['VITE_DEV'] === 'true') {
     mainWindow.loadURL('http://localhost:5173').catch(() => {
       mainWindow?.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
@@ -75,6 +83,24 @@ function createWindow(): void {
     log('ready-to-show event fired: showing window');
     mainWindow?.show();
     mainWindow?.focus();
+
+    mainWindow?.webContents.executeJavaScript(`
+      ({
+        title: document.title,
+        bodyHTML: document.getElementById('root')?.innerHTML?.slice(0, 300),
+        url: window.location.href
+      })
+    `).then(info => {
+      log('RENDERER_DOM: ' + JSON.stringify(info));
+      setTimeout(() => {
+        mainWindow?.webContents.capturePage().then(img => {
+          require('fs').writeFileSync('D:\\FM_AUTO_OPS\\Temp\\electron-ui.png', img.toPNG());
+          log('Window screenshot captured successfully: D:\\FM_AUTO_OPS\\Temp\\electron-ui.png');
+        }).catch(err => log('CapturePage error: ' + (err as Error).message));
+      }, 500);
+    }).catch(err => {
+      log('EXEC_JS_ERR: ' + (err as Error).message);
+    });
   });
 
   mainWindow.on('closed', () => {
