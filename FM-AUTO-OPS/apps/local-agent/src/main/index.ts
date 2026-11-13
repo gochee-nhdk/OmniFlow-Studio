@@ -1,10 +1,33 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, appendFileSync } from 'fs';
 import { registerAll } from './ipc/index';
+
+const LOG_DIR = 'D:\\FM_AUTO_OPS\\Logs';
+const LOG_FILE = join(LOG_DIR, 'electron-main.log');
+
+function log(msg: string): void {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {
+    // Ignore logging errors
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  log(`UNCAUGHT_EXCEPTION: ${error.stack || error.message}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  log(`UNHANDLED_REJECTION: ${reason}`);
+});
+
+log('Electron main process starting up');
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
+  log('Another instance is already running. Focusing existing instance and quitting new process.');
   app.quit();
   process.exit(0);
 }
@@ -15,9 +38,11 @@ const DB_PATH = join(DATA_DIR, 'fmauto.sqlite');
 
 function ensureDataDir(): void {
   mkdirSync(DATA_DIR, { recursive: true });
+  log(`Data directory ensured: ${DATA_DIR}`);
 }
 
 function createWindow(): void {
+  log('Creating main BrowserWindow...');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -36,33 +61,44 @@ function createWindow(): void {
   });
 
   const localHtmlPath = join(__dirname, '../../../web/dist/index.html');
+  log(`Loading HTML from: ${localHtmlPath}`);
 
   if (process.env['VITE_DEV'] === 'true') {
     mainWindow.loadURL('http://localhost:5173').catch(() => {
-      mainWindow?.loadFile(localHtmlPath).catch(() => null);
+      mainWindow?.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
     });
   } else {
-    mainWindow.loadFile(localHtmlPath);
+    mainWindow.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
   }
 
   mainWindow.once('ready-to-show', () => {
+    log('ready-to-show event fired: showing window');
     mainWindow?.show();
     mainWindow?.focus();
   });
 
-  mainWindow.on('close', (event) => {
-    event.preventDefault();
-    mainWindow?.hide();
+  mainWindow.on('closed', () => {
+    log('mainWindow closed');
+    mainWindow = null;
   });
 }
 
 app.whenReady().then(() => {
-  ensureDataDir();
-  registerAll(DB_PATH);
-  createWindow();
+  log('app.whenReady fired');
+  try {
+    ensureDataDir();
+    log(`Registering IPC handlers with DB_PATH: ${DB_PATH}`);
+    registerAll(DB_PATH);
+    log('IPC handlers registered successfully');
+    createWindow();
+  } catch (err: unknown) {
+    const error = err as Error;
+    log(`FATAL error in whenReady: ${error.stack || error.message}`);
+  }
 });
 
 app.on('second-instance', () => {
+  log('second-instance triggered: restoring and focusing main window');
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -71,10 +107,12 @@ app.on('second-instance', () => {
 });
 
 app.on('window-all-closed', () => {
-  // Stay resident in background on Windows
+  log('All windows closed. Quitting app.');
+  app.quit();
 });
 
 app.on('before-quit', () => {
+  log('App before-quit');
   if (mainWindow) {
     mainWindow.destroy();
   }
