@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.turbo/
+*.log
+.env
+.env.local
+*.sqlite
+*.sqlite-journal
+release/
+out/
+.DS_Store
+Thumbs.db

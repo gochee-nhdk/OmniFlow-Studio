@@ -1,0 +1,26 @@
+{
+  "name": "fm-auto-ops",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "agent:dev": "pnpm --filter @fm/local-agent dev",
+    "agent:build": "pnpm --filter @fm/local-agent build",
+    "web:dev": "pnpm --filter @fm/web dev",
+    "setup": "node scripts/setup.mjs"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
