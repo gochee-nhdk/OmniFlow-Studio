@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { Server, ShoppingCart, Monitor, HardDrive, Play, Download, Wifi, KeyRound, CheckCircle2 } from 'lucide-react';
+import { Server, ShoppingCart, Monitor, HardDrive, Play, Download, Wifi, KeyRound, CheckCircle2, Clock, AlertTriangle, FolderOpen } from 'lucide-react';
 import { useAgentStore } from '../store/agentStore';
 import StatusBadge from '../components/StatusBadge';
 import { formatDistanceToNow } from 'date-fns';
+import { invoke } from '../lib/ipc';
 
 function getAuthStateBadge(state: string): 'online' | 'offline' | 'error' | 'unknown' | 'warning' {
   if (state === 'AUTHENTICATED') return 'online';
@@ -22,13 +23,20 @@ function getWorkflowStatusBadge(status: string): 'running' | 'success' | 'error'
 
 export default function DashboardPage() {
   const {
-    agentStatus, networkStatus, recentRuns,
-    isLoading, startWorkflow, loadHistory, checkNetwork,
+    agentStatus, networkStatus, recentRuns, activeProgress,
+    isLoading, startWorkflow, loadHistory, checkNetwork, refreshStatus
   } = useAgentStore();
 
   useEffect(() => {
     loadHistory();
     checkNetwork();
+    refreshStatus();
+
+    const timer = setInterval(() => {
+      loadHistory();
+      refreshStatus();
+    }, 4000);
+    return () => clearInterval(timer);
   }, []);
 
   const agentOnline = agentStatus?.isOnline ?? true;
@@ -116,11 +124,55 @@ export default function DashboardPage() {
                 <div className="text-xs text-slate-400">D:\FM_AUTO_OPS</div>
               </div>
             </div>
-            <StatusBadge status="online" label="Ready" />
+            <button
+              onClick={() => invoke('files:open-dir', { path: 'D:\\FM_AUTO_OPS' })}
+              className="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded flex items-center gap-1 border border-amber-200 cursor-pointer"
+              title="Mở thư mục lưu trữ"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Mở
+            </button>
           </div>
-          <div className="mt-3 text-xs text-slate-500">All 9 folders verified</div>
+          <div className="mt-3 text-xs text-slate-500">Sales, Inventory, SAP, Logs</div>
         </div>
       </div>
+
+      {/* Live Active Progress Card */}
+      {activeProgress && (
+        <div className={`p-4 rounded-xl border flex items-center justify-between shadow-xs transition-all ${
+          activeProgress.status === 'RUNNING'
+            ? 'bg-blue-50 border-blue-200 text-blue-900'
+            : activeProgress.status === 'SUCCESS'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+            : 'bg-red-50 border-red-200 text-red-900'
+        }`}>
+          <div className="flex items-center gap-3">
+            {activeProgress.status === 'RUNNING' ? (
+              <Clock className="w-5 h-5 text-blue-600 animate-spin flex-shrink-0" />
+            ) : activeProgress.status === 'SUCCESS' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            )}
+            <div>
+              <div className="text-sm font-bold">
+                {activeProgress.status === 'RUNNING' ? 'Đang thực thi RPA Automation...' : activeProgress.status === 'SUCCESS' ? 'RPA Automation Thành Công!' : 'RPA Automation Gặp Lỗi'}
+              </div>
+              <div className="text-xs opacity-90">{activeProgress.stepName}</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => invoke('files:open-dir', { path: 'D:\\FM_AUTO_OPS\\Sales' })}
+              className="text-xs bg-white/80 hover:bg-white text-slate-800 font-medium px-2.5 py-1.5 rounded border border-slate-200 flex items-center gap-1 cursor-pointer"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Mở D:\FM_AUTO_OPS\Sales
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 2 Dedicated Operational Feature Blocks: POS and SAP */}
       <div className="grid grid-cols-2 gap-6">

@@ -49,12 +49,12 @@ export class BrowserManager {
     const profileDir = join(getProfileBase(), profile.toLowerCase());
     mkdirSync(profileDir, { recursive: true });
 
-    const context = await chromium.launchPersistentContext(profileDir, {
+    const launchOptions = {
       headless: this.headless,
       acceptDownloads: true,
       downloadsPath: this.downloadDir,
       viewport: { width: 1280, height: 900 },
-      ignoreHTTPSErrors: profile === 'SAP', // SAP internal cert may be self-signed
+      ignoreHTTPSErrors: true,
       args: [
         '--disable-blink-features=AutomationControlled',
         '--no-first-run',
@@ -63,7 +63,23 @@ export class BrowserManager {
       ],
       locale: 'vi-VN',
       timezoneId: 'Asia/Ho_Chi_Minh',
-    });
+    };
+
+    let context: BrowserContext;
+    try {
+      context = await chromium.launchPersistentContext(profileDir, launchOptions);
+    } catch (launchErr: unknown) {
+      const err = launchErr as Error;
+      if (err.message?.includes("Executable doesn't exist") || err.message?.includes('playwright install')) {
+        // Fallback to native Windows Microsoft Edge
+        context = await chromium.launchPersistentContext(profileDir, {
+          ...launchOptions,
+          channel: 'msedge',
+        });
+      } else {
+        throw launchErr;
+      }
+    }
 
     context.on('dialog', async (dialog) => {
       console.log(`[BrowserManager] Unexpected dialog on ${profile}: ${dialog.type()} — "${dialog.message()}"`);

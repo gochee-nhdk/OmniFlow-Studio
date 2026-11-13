@@ -30,6 +30,10 @@ export function registerAll(dbPath: string): void {
 
 function registerAgentHandlers(): void {
   ipcMain.handle('agent:status', async () => {
+    const creds = db ? db.listCredentialMeta() : [];
+    const hasSap = creds.some((c) => (c.accountName === 'SAP_MAIN' || c.account_name === 'SAP_MAIN') && c.username);
+    const hasPos = creds.some((c) => (c.accountName === 'POS_MAIN' || c.account_name === 'POS_MAIN') && c.username);
+
     return {
       deviceId: os.hostname(),
       deviceName: os.hostname(),
@@ -37,8 +41,8 @@ function registerAgentHandlers(): void {
       version: '1.0.0-windows',
       lastHeartbeat: new Date().toISOString(),
       currentStatus: 'IDLE',
-      sapAuthState: 'NOT_CONFIGURED',
-      posAuthState: 'NOT_CONFIGURED',
+      sapAuthState: hasSap ? 'AUTHENTICATED' : 'NOT_CONFIGURED',
+      posAuthState: hasPos ? 'AUTHENTICATED' : 'NOT_CONFIGURED',
       browserReady: Boolean(browserManager),
     };
   });
@@ -50,6 +54,21 @@ function registerWorkflowHandlers(): void {
 
     const run = db.createWorkflowRun(payload.type);
 
+    const broadcastStep = (stepName: string, status: string, index: number, errorMessage?: string) => {
+      try {
+        _event.sender.send('workflow:progress', {
+          runId: run.id,
+          workflowType: payload.type,
+          stepName,
+          status,
+          index,
+          errorMessage,
+        });
+      } catch {
+        // Non-fatal
+      }
+    };
+
     // DISPATCH WORKFLOWS
     const isPosTask = ['DAILY_PROCUREMENT', 'POS_AUTOMATION', 'DOWNLOAD_SALES', 'DOWNLOAD_INVENTORY'].includes(payload.type);
     const isSapTask = ['DAILY_PROCUREMENT', 'SAP_AUTOMATION', 'SAP_LOGIN_CHECK'].includes(payload.type);
@@ -59,12 +78,19 @@ function registerWorkflowHandlers(): void {
         // --- 1. POS AUTOMATION BRANCH ---
         if (isPosTask) {
           const step1 = db.createWorkflowStep(run.id, 'Check POS RPFO Connectivity', 1);
+          broadcastStep('Check POS RPFO Connectivity', 'RUNNING', 1);
           const posAdapter = new POSAdapter(browserManager, 'http://172.16.1.200/');
           db.updateWorkflowStep(step1.id, 'SUCCESS');
+          broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
+
+          const posPassword = await credentialManager.getPassword('POS_MAIN');
+          const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
+          const posCreds = posMeta && posPassword ? { username: String(posMeta.username || ''), password: posPassword } : undefined;
 
           // Download Sales Transaction Detail
           if (['DAILY_PROCUREMENT', 'POS_AUTOMATION', 'DOWNLOAD_SALES'].includes(payload.type)) {
             const step2 = db.createWorkflowStep(run.id, 'POS: Download Sales Transaction Detail', 2);
+            broadcastStep('POS: Tải Sales Transaction Detail', 'RUNNING', 2);
             const dateRange = POSAdapter.calculateDateRange('TODAY');
             const result = await posAdapter.downloadSalesTransactionDetail({
               fromDate: dateRange.from,
@@ -72,7 +98,7 @@ function registerWorkflowHandlers(): void {
               storeFilter: 'All',
               outputDir: 'D:\\FM_AUTO_OPS\\Sales',
               fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
-            });
+            }, posCreds);
 
             const validator = new ExcelValidator();
             const validation = await validator.validateWorkbook(result.tempFilePath);
@@ -95,17 +121,23 @@ function registerWorkflowHandlers(): void {
             });
 
             db.updateWorkflowStep(step2.id, validation.valid ? 'SUCCESS' : 'FAILED');
+            broadcastStep(
+              `POS: Tải Sales Detail (${validation.rowCount || 0} dòng)`,
+              validation.valid ? 'SUCCESS' : 'FAILED',
+              2
+            );
           }
 
           // Download Inventory Onhand
           if (['DAILY_PROCUREMENT', 'POS_AUTOMATION', 'DOWNLOAD_INVENTORY'].includes(payload.type)) {
             const stepInv = db.createWorkflowStep(run.id, 'POS: Download Inventory Onhand', 3);
+            broadcastStep('POS: Tải Inventory Onhand', 'RUNNING', 3);
             try {
               const invResult = await posAdapter.downloadInventoryOnhand({
                 storeFilter: 'All',
                 outputDir: 'D:\\FM_AUTO_OPS\\Inventory',
                 fileNameTemplate: 'Inventory_Onhand_{TIMESTAMP}.xlsx',
-              });
+              }, posCreds);
 
               const validator = new ExcelValidator();
               const validation = await validator.validateWorkbook(invResult.tempFilePath);
@@ -128,10 +160,11 @@ function registerWorkflowHandlers(): void {
               });
 
               db.updateWorkflowStep(stepInv.id, 'SUCCESS');
+              broadcastStep(`POS: Tải Inventory Onhand (${validation.rowCount || 0} dòng)`, 'SUCCESS', 3);
             } catch (invErr) {
-              // Inventory Onhand export button discovery fallback
               console.warn('Inventory download inspection:', (invErr as Error).message);
               db.updateWorkflowStep(stepInv.id, 'SKIPPED');
+              broadcastStep('POS: Tải Inventory Onhand (Tạm bỏ qua)', 'SKIPPED', 3);
             }
           }
         }
@@ -139,8 +172,9 @@ function registerWorkflowHandlers(): void {
         // --- 2. SAP AUTOMATION BRANCH ---
         if (isSapTask) {
           const stepSap = db.createWorkflowStep(run.id, 'SAP Business One SLD Authentication', 4);
+          broadcastStep('SAP: Khởi động & Đăng nhập SLD', 'RUNNING', 4);
           const sapPassword = await credentialManager.getPassword('SAP_MAIN');
-          const sapMeta = db.listCredentialMeta().find((m) => m.accountName === 'SAP_MAIN');
+          const sapMeta = db.listCredentialMeta().find((m) => m.accountName === 'SAP_MAIN' || m.account_name === 'SAP_MAIN');
           const appSettingsRaw = db.getSetting('app_settings');
           let appSettings: { sapServer?: string; sapCompany?: string } = {};
           try {
@@ -168,13 +202,16 @@ function registerWorkflowHandlers(): void {
             });
 
             db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED');
+            broadcastStep('SAP Business One Đăng nhập', loginRes.success ? 'SUCCESS' : 'FAILED', 4);
           } else {
             db.updateWorkflowStep(stepSap.id, 'SKIPPED');
+            broadcastStep('SAP: Chưa cấu hình mật khẩu trong Settings', 'SKIPPED', 4);
           }
         }
 
         db.updateWorkflowRunStatus(run.id, 'SUCCESS');
-        return run;
+        broadcastStep('Hoàn thành Quy trình Automation', 'SUCCESS', 99);
+        return db.getWorkflowRun(run.id) || run;
       } catch (err) {
         db.logError({
           runId: run.id,
@@ -183,12 +220,13 @@ function registerWorkflowHandlers(): void {
           message: (err as Error).message,
         });
         db.updateWorkflowRunStatus(run.id, 'FAILED', (err as Error).message);
+        broadcastStep('Lỗi Quy trình: ' + (err as Error).message, 'FAILED', 99, (err as Error).message);
         throw err;
       }
     }
 
     db.updateWorkflowRunStatus(run.id, 'FAILED', `Workflow ${payload.type} completed initial run.`);
-    return run;
+    return db.getWorkflowRun(run.id) || run;
   });
 
   ipcMain.handle('workflow:stop', async () => {

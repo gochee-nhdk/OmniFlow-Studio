@@ -325,10 +325,41 @@ export class FMDatabase {
       .run(data.id, data.accountName, data.application, data.username, data.credentialKey, data.url);
   }
 
-  listCredentialMeta(): Record<string, unknown>[] {
-    return this.db
+  listCredentialMeta(): Array<{
+    id: string;
+    accountName: string;
+    account_name: string;
+    application: string;
+    username: string;
+    url: string;
+    isEnabled: boolean;
+    is_enabled: number;
+    lastVerifiedAt?: string;
+    last_verified_at?: string;
+    authState: string;
+    auth_state: string;
+    createdAt: string;
+    created_at: string;
+  }> {
+    const rows = this.db
       .prepare('SELECT id, account_name, application, username, url, is_enabled, last_verified_at, auth_state, created_at FROM credentials_metadata')
       .all() as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: String(r['id'] || ''),
+      accountName: String(r['account_name'] || ''),
+      account_name: String(r['account_name'] || ''),
+      application: String(r['application'] || ''),
+      username: String(r['username'] || ''),
+      url: String(r['url'] || ''),
+      isEnabled: Boolean(r['is_enabled']),
+      is_enabled: Number(r['is_enabled'] || 0),
+      lastVerifiedAt: r['last_verified_at'] ? String(r['last_verified_at']) : undefined,
+      last_verified_at: r['last_verified_at'] ? String(r['last_verified_at']) : undefined,
+      authState: String(r['auth_state'] || 'NOT_CONFIGURED'),
+      auth_state: String(r['auth_state'] || 'NOT_CONFIGURED'),
+      createdAt: String(r['created_at'] || ''),
+      created_at: String(r['created_at'] || ''),
+    }));
   }
 
   audit(action: string, target?: string, details?: Record<string, unknown>): void {

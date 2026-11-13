@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { invoke } from '../lib/ipc';
+import { invoke, onEvent } from '../lib/ipc';
 
 export type WorkflowStatus = 
   | 'IDLE' | 'INITIALIZING' | 'RUNNING' | 'WAITING_FOR_USER'
@@ -58,6 +58,15 @@ export interface NetworkStatus {
   lastChecked?: string;
 }
 
+export interface WorkflowProgress {
+  runId: string;
+  workflowType: string;
+  stepName: string;
+  status: string;
+  index: number;
+  errorMessage?: string;
+}
+
 interface AgentStore {
   agentStatus: AgentStatus | null;
   currentRun: WorkflowRun | null;
@@ -66,6 +75,7 @@ interface AgentStore {
   networkStatus: NetworkStatus;
   isLoading: boolean;
   pendingUserAction: { message: string; runId: string } | null;
+  activeProgress: WorkflowProgress | null;
 
   refreshStatus: () => Promise<void>;
   checkNetwork: () => Promise<void>;
@@ -77,71 +87,108 @@ interface AgentStore {
   clearErrors: () => Promise<void>;
 }
 
-export const useAgentStore = create<AgentStore>((set) => ({
-  agentStatus: null,
-  currentRun: null,
-  recentRuns: [],
-  errors: [],
-  networkStatus: { sap: true, pos: true },
-  isLoading: false,
-  pendingUserAction: null,
-
-  refreshStatus: async () => {
-    try {
-      const status = await invoke<AgentStatus>('agent:status');
-      set({ agentStatus: status });
-    } catch {
-      set({ agentStatus: null });
+export const useAgentStore = create<AgentStore>((set, get) => {
+  // Listen to live background progress events from Electron main
+  onEvent('workflow:progress', (raw) => {
+    const data = raw as WorkflowProgress;
+    set({ activeProgress: data });
+    if (data.status === 'SUCCESS' || data.status === 'FAILED') {
+      get().loadHistory();
+      get().refreshStatus();
     }
-  },
+  });
 
-  checkNetwork: async () => {
-    try {
-      const result = await invoke<NetworkStatus>('network:check');
-      set({ networkStatus: { ...result, lastChecked: new Date().toISOString() } });
-    } catch {
-      // Offline fallback
-    }
-  },
+  return {
+    agentStatus: null,
+    currentRun: null,
+    recentRuns: [],
+    errors: [],
+    networkStatus: { sap: true, pos: true },
+    isLoading: false,
+    pendingUserAction: null,
+    activeProgress: null,
 
-  startWorkflow: async (type: string, payload?: unknown) => {
-    set({ isLoading: true });
-    try {
-      await invoke('workflow:start', { type, payload });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
+    refreshStatus: async () => {
+      try {
+        const status = await invoke<AgentStatus>('agent:status');
+        set({ agentStatus: status });
+      } catch {
+        set({ agentStatus: null });
+      }
+    },
 
-  stopWorkflow: async () => {
-    await invoke('workflow:stop');
-  },
+    checkNetwork: async () => {
+      try {
+        const result = await invoke<NetworkStatus>('network:check');
+        set({ networkStatus: { ...result, lastChecked: new Date().toISOString() } });
+      } catch {
+        // Offline fallback
+      }
+    },
 
-  respondToUserAction: async (runId: string, confirmed: boolean) => {
-    await invoke('user-action:respond', { runId, confirmed });
-    set({ pendingUserAction: null });
-  },
+    startWorkflow: async (type: string, payload?: unknown) => {
+      set({
+        isLoading: true,
+        activeProgress: {
+          runId: '',
+          workflowType: type,
+          stepName: `Bắt đầu quy trình ${type.replace(/_/g, ' ')}...`,
+          status: 'RUNNING',
+          index: 0,
+        },
+      });
 
-  loadHistory: async () => {
-    try {
-      const runs = await invoke<WorkflowRun[]>('workflow:history');
-      set({ recentRuns: runs || [] });
-    } catch {
-      set({ recentRuns: [] });
-    }
-  },
+      try {
+        await invoke('workflow:start', { type, payload });
+      } catch (err) {
+        set({
+          activeProgress: {
+            runId: '',
+            workflowType: type,
+            stepName: `Lỗi: ${(err as Error).message}`,
+            status: 'FAILED',
+            index: 99,
+            errorMessage: (err as Error).message,
+          },
+        });
+      } finally {
+        set({ isLoading: false });
+        await get().loadHistory();
+        await get().refreshStatus();
+      }
+    },
 
-  loadErrors: async () => {
-    try {
-      const errors = await invoke<ErrorEntry[]>('errors:list');
-      set({ errors: errors || [] });
-    } catch {
+    stopWorkflow: async () => {
+      await invoke('workflow:stop');
+      set({ isLoading: false, activeProgress: null });
+    },
+
+    respondToUserAction: async (runId: string, confirmed: boolean) => {
+      await invoke('user-action:respond', { runId, confirmed });
+      set({ pendingUserAction: null });
+    },
+
+    loadHistory: async () => {
+      try {
+        const runs = await invoke<WorkflowRun[]>('workflow:history');
+        set({ recentRuns: runs || [] });
+      } catch {
+        set({ recentRuns: [] });
+      }
+    },
+
+    loadErrors: async () => {
+      try {
+        const errors = await invoke<ErrorEntry[]>('errors:list');
+        set({ errors: errors || [] });
+      } catch {
+        set({ errors: [] });
+      }
+    },
+
+    clearErrors: async () => {
+      await invoke('errors:clear');
       set({ errors: [] });
-    }
-  },
-
-  clearErrors: async () => {
-    await invoke('errors:clear');
-    set({ errors: [] });
-  },
-}));
+    },
+  };
+});
