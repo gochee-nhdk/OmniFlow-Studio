@@ -1,6 +1,9 @@
 @echo off
 title FM AUTO OPS — Enterprise Automation Platform
-echo Starting FM AUTO OPS Desktop Agent...
 cd /d "%~dp0apps\local-agent"
-start /b npx electron dist/main/index.js
+if exist "node_modules\.bin\electron.cmd" (
+  start "" "node_modules\.bin\electron.cmd" dist\main\index.js
+) else (
+  start "" npx electron dist\main\index.js
+)
 exit

@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "main": "src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema.sql"
+    ".": "./dist/index.js",
+    "./schema": "./dist/schema.js"
   },
   "scripts": {
     "build": "tsc",
