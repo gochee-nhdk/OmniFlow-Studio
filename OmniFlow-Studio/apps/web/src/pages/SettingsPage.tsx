@@ -17,9 +17,9 @@ interface EndpointProbeResult {
 }
 
 const DEFAULT_SERVICES = [
-  { id: 'sap-web', name: 'SAP Business One Web Client', url: 'https://172.16.1.210:8100/dispatcher/', port: 8100 },
-  { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: 'https://172.16.0.201:40000/ControlCenter/sbo.html', port: 40000 },
-  { id: 'pos-web', name: 'POS RPFO Web Application', url: 'http://172.16.1.200/', port: 80 },
+  { id: 'sap-web', name: 'SAP Business One Web Client', url: 'https://sap-cluster.enterprise.example.com:8100/dispatcher/', port: 8100 },
+  { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: 'https://sap-sld.enterprise.example.com:40000/ControlCenter/', port: 40000 },
+  { id: 'pos-web', name: 'POS RPFO Enterprise Gateway', url: 'https://pos-gateway.enterprise.example.com/', port: 443 },
 ];
 
 export default function SettingsPage() {
@@ -148,16 +148,16 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4 shadow-xs">
             <h3 className="text-base font-bold text-slate-900">Cấu trúc thư mục lưu trữ hệ thống</h3>
             <p className="text-xs text-slate-500">
-              Đường dẫn tự động hóa gốc trên máy tính Windows này là <code className="bg-slate-100 px-1 py-0.5 rounded text-blue-700 font-bold">D:\FM_AUTO_OPS\</code>.
+              Đường dẫn tự động hóa gốc trên máy tính Windows này là <code className="bg-slate-100 px-1 py-0.5 rounded text-blue-700 font-bold">D:\OmniFlow_Reports\</code>.
               Nhấn vào bất kỳ thư mục nào để mở trực tiếp trong File Explorer.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
               {[
-                { name: 'Inventory', path: 'D:\\FM_AUTO_OPS\\Inventory', desc: 'File Excel Tồn kho (Inventory Onhand)' },
-                { name: 'Sales', path: 'D:\\FM_AUTO_OPS\\Sales', desc: 'File Excel Doanh số (Sales Detail)' },
-                { name: 'SAP', path: 'D:\\FM_AUTO_OPS\\SAP', desc: 'Dữ liệu xuất & báo cáo SAP Business One' },
-                { name: 'PO', path: 'D:\\FM_AUTO_OPS\\PO', desc: 'Đơn đặt hàng Purchase Order tự động' },
+                { name: 'Inventory', path: 'D:\\OmniFlow_Reports\\Inventory', desc: 'File Excel Tồn kho (Inventory Onhand)' },
+                { name: 'Sales', path: 'D:\\OmniFlow_Reports\\Sales', desc: 'File Excel Doanh số (Sales Detail)' },
+                { name: 'SAP', path: 'D:\\OmniFlow_Reports\\SAP', desc: 'Dữ liệu xuất & báo cáo SAP Business One' },
+                { name: 'PO', path: 'D:\\OmniFlow_Reports\\PO', desc: 'Đơn đặt hàng Purchase Order tự động' },
                 { name: 'Return', path: 'D:\\FM_AUTO_OPS\\Return', desc: 'Biên bản & chứng từ hàng trả về' },
                 { name: 'Archive', path: 'D:\\FM_AUTO_OPS\\Archive', desc: 'Lưu trữ sao lưu lịch sử theo phiên bản' },
                 { name: 'Error', path: 'D:\\FM_AUTO_OPS\\Error', desc: 'Thư mục cách ly file lỗi khi tải' },

@@ -1,4 +1,4 @@
-name: Release FM AUTO OPS
+name: Release OmniFlow Studio
 on:
   push:
     tags:
@@ -8,6 +8,9 @@ on:
 jobs:
   release:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: OmniFlow-Studio
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,6 +23,7 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
+          cache-dependency-path: 'OmniFlow-Studio/pnpm-lock.yaml'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build all workspaces (apps/web and packages)
@@ -34,8 +38,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/*.exe
-            release/*.zip
+            OmniFlow-Studio/release/*.exe
+            OmniFlow-Studio/release/*.zip
           draft: false
           prerelease: false
           generate_release_notes: true

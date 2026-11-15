@@ -1,9 +1,9 @@
 {
   "name": "@fm/local-agent",
-  "productName": "FM AUTO OPS",
+  "productName": "OmniFlow Studio",
   "version": "1.0.0",
-  "description": "FM AUTO OPS — Enterprise Procurement & RPA Automation",
-  "author": "FM AUTO OPS",
+  "description": "OmniFlow Studio — Enterprise ERP & POS Automation Platform",
+  "author": "OmniFlow Studio",
   "private": true,
   "type": "commonjs",
   "main": "dist/main/index.js",
@@ -16,8 +16,8 @@
     "start": "electron dist/main/index.js"
   },
   "build": {
-    "appId": "com.fmauto.ops",
-    "productName": "FM AUTO OPS",
+    "appId": "com.omniflow.studio",
+    "productName": "OmniFlow Studio",
     "directories": {
       "output": "../../release"
     },
