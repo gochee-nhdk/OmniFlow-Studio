@@ -54,7 +54,15 @@ function getMockData<T>(channel: IPCChannel): T {
       { id: '2', accountName: 'POS_MAIN', application: 'POS', username: 'pos_admin', url: 'http://172.16.1.200/', authState: 'NOT_CONFIGURED' },
     ],
     'settings:get': null,
-    'network:check': { sap: true, pos: true },
+    'network:check': { sap: false, pos: false, sapLatency: 0, posLatency: 0, checkedAt: new Date().toISOString() },
+    'network:probe-endpoints': {
+      results: [
+        { id: 'sap-web', url: 'https://172.16.1.210:8100/dispatcher/', port: 8100, reachable: false, latencyMs: 0, error: 'Chế độ Preview / Chưa kết nối VPN doanh nghiệp' },
+        { id: 'sap-sld', url: 'https://172.16.0.201:40000/ControlCenter/sbo.html', port: 40000, reachable: false, latencyMs: 0, error: 'Chế độ Preview / Chưa kết nối VPN doanh nghiệp' },
+        { id: 'pos-web', url: 'http://172.16.1.200/', port: 80, reachable: false, latencyMs: 0, error: 'Chế độ Preview / Chưa kết nối VPN doanh nghiệp' },
+      ],
+      checkedAt: new Date().toISOString(),
+    },
   };
   return (mocks[channel] ?? null) as T;
 }

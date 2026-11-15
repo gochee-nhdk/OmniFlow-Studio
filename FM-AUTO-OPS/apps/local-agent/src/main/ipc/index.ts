@@ -1,12 +1,13 @@
-import { ipcMain, shell } from 'electron';
+import { ipcMain, shell, dialog } from 'electron';
 import { FMDatabase } from '@fm/database';
-import { credentialManager } from '@fm/security';
+import { credentialManager, SecureStorage } from '@fm/security';
 import { BrowserManager } from '@fm/browser-engine';
 import { POSAdapter } from '@fm/pos-adapter';
 import { SAPAdapter } from '@fm/sap-adapter';
 import { ExcelValidator, DownloadFileManager } from '@fm/file-engine';
 import http from 'http';
 import https from 'https';
+import net from 'net';
 import os from 'os';
 
 let db: FMDatabase | null = null;
@@ -57,11 +58,21 @@ function registerWorkflowHandlers(): void {
       fromDate?: string;
       toDate?: string;
       storeFilter?: string;
+      salesOutputDir?: string;
+      salesFileNameTemplate?: string;
       inventoryStoreFilter?: string;
       inventorySlocFilter?: string;
       inventoryItemFilter?: string;
+      inventoryOutputDir?: string;
+      inventoryFileNameTemplate?: string;
+      outputDir?: string;
       sapServer?: string;
       sapCompany?: string;
+      sapUser?: string;
+      sapPassword?: string;
+      sapOutputDir?: string;
+      posUser?: string;
+      posPassword?: string;
     };
   }) => {
     if (!db || !browserManager) throw new Error('Database or BrowserManager not ready');
@@ -95,12 +106,46 @@ function registerWorkflowHandlers(): void {
           const step1 = db.createWorkflowStep(run.id, 'Check POS RPFO Connectivity', 1);
           broadcastStep('Check POS RPFO Connectivity', 'RUNNING', 1);
           const posAdapter = new POSAdapter(browserManager, 'http://172.16.1.200/');
+
+          let posPassword = opts.posPassword;
+          if (!posPassword) {
+            try {
+              posPassword = (await credentialManager.getPassword('POS_MAIN')) || undefined;
+            } catch {}
+          }
+          if (!posPassword && db) {
+            const cached = db.getSetting('cred_POS_MAIN');
+            if (cached) {
+              try {
+                posPassword = SecureStorage.decrypt(cached);
+              } catch {
+                try {
+                  posPassword = Buffer.from(cached, 'base64').toString('utf-8');
+                } catch {}
+              }
+            }
+          }
+          const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
+          const posUsername = opts.posUser || (posMeta ? String(posMeta.username || '') : 'TM01');
+          const posCreds = posPassword ? { username: posUsername, password: posPassword } : undefined;
+
+          // Perform proactive authenticated session check with continuous retry
+          if (posCreds) {
+            broadcastStep('Đang xác thực và kiểm tra phiên làm việc POS RPFO...', 'RUNNING', 1);
+            try {
+              await posAdapter.login(posCreds, {
+                maxRetries: 15,
+                retryDelayMs: 2000,
+                onProgress: (msg) => broadcastStep(msg, 'RUNNING', 1),
+              });
+            } catch (authErr) {
+              console.warn('POS Login preliminary check warning:', (authErr as Error).message);
+              // Non-fatal if transient, download methods will re-attempt authentication
+            }
+          }
+
           db.updateWorkflowStep(step1.id, 'SUCCESS');
           broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
-
-          const posPassword = await credentialManager.getPassword('POS_MAIN');
-          const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
-          const posCreds = posMeta && posPassword ? { username: String(posMeta.username || ''), password: posPassword } : undefined;
 
           const doSales = payload.type === 'DOWNLOAD_SALES' ||
             (payload.type === 'POS_AUTOMATION' && opts.includeSales !== false) ||
@@ -117,14 +162,15 @@ function registerWorkflowHandlers(): void {
             const fromD = opts.fromDate || dateRange.from;
             const toD = opts.toDate || dateRange.to;
             const storeF = opts.storeFilter || 'All';
+            const targetSalesDir = opts.salesOutputDir || opts.outputDir || 'D:\\FM_AUTO_OPS\\Sales';
 
             broadcastStep(`POS: Tải Sales Detail (${fromD} → ${toD})`, 'RUNNING', 2);
             const result = await posAdapter.downloadSalesTransactionDetail({
               fromDate: fromD,
               toDate: toD,
               storeFilter: storeF,
-              outputDir: 'D:\\FM_AUTO_OPS\\Sales',
-              fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
+              outputDir: targetSalesDir,
+              fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
             }, posCreds);
 
             const validator = new ExcelValidator();
@@ -133,7 +179,7 @@ function registerWorkflowHandlers(): void {
             const fileManager = new DownloadFileManager();
             const finalPath = fileManager.moveAndRename(
               result.tempFilePath,
-              'D:\\FM_AUTO_OPS\\Sales',
+              targetSalesDir,
               result.suggestedFilename
             );
 
@@ -159,14 +205,15 @@ function registerWorkflowHandlers(): void {
           if (doInventory) {
             const stepInv = db.createWorkflowStep(run.id, 'POS: Download Inventory Onhand', 3);
             const invStore = opts.inventoryStoreFilter || 'All';
+            const targetInvDir = opts.inventoryOutputDir || opts.outputDir || 'D:\\FM_AUTO_OPS\\Inventory';
             broadcastStep(`POS: Tải Inventory Onhand (Kho: ${invStore})`, 'RUNNING', 3);
             try {
               const invResult = await posAdapter.downloadInventoryOnhand({
                 storeFilter: invStore,
                 slocFilter: opts.inventorySlocFilter,
                 itemFilter: opts.inventoryItemFilter,
-                outputDir: 'D:\\FM_AUTO_OPS\\Inventory',
-                fileNameTemplate: 'Inventory_Onhand_{TIMESTAMP}.xlsx',
+                outputDir: targetInvDir,
+                fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_Onhand_{TIMESTAMP}.xlsx',
               }, posCreds);
 
               const validator = new ExcelValidator();
@@ -175,7 +222,7 @@ function registerWorkflowHandlers(): void {
               const fileManager = new DownloadFileManager();
               const finalPath = fileManager.moveAndRename(
                 invResult.tempFilePath,
-                'D:\\FM_AUTO_OPS\\Inventory',
+                targetInvDir,
                 invResult.suggestedFilename
               );
 
@@ -203,8 +250,26 @@ function registerWorkflowHandlers(): void {
         if (isSapTask) {
           const stepSap = db.createWorkflowStep(run.id, 'SAP Business One SLD Authentication', 4);
           broadcastStep('SAP: Khởi động & Đăng nhập SLD', 'RUNNING', 4);
-          const sapPassword = await credentialManager.getPassword('SAP_MAIN');
+          let sapPassword = opts.sapPassword;
+          if (!sapPassword) {
+            try {
+              sapPassword = (await credentialManager.getPassword('SAP_MAIN')) || undefined;
+            } catch {}
+          }
+          if (!sapPassword && db) {
+            const cached = db.getSetting('cred_SAP_MAIN');
+            if (cached) {
+              try {
+                sapPassword = SecureStorage.decrypt(cached);
+              } catch {
+                try {
+                  sapPassword = Buffer.from(cached, 'base64').toString('utf-8');
+                } catch {}
+              }
+            }
+          }
           const sapMeta = db.listCredentialMeta().find((m) => m.accountName === 'SAP_MAIN' || m.account_name === 'SAP_MAIN');
+          const sapUsername = opts.sapUser || (sapMeta ? String(sapMeta.username || '') : 'LOG32');
           const appSettingsRaw = db.getSetting('app_settings');
           let appSettings: { sapServer?: string; sapCompany?: string } = {};
           try {
@@ -213,7 +278,7 @@ function registerWorkflowHandlers(): void {
             // Keep default
           }
 
-          if (sapMeta && sapPassword) {
+          if (sapPassword) {
             const targetServer = opts.sapServer || appSettings.sapServer || 'SBO@172.16.0.201:30013';
             const targetCompany = opts.sapCompany || appSettings.sapCompany || 'Công ty TNHH Thương Mại LARIA (FM_PRO)';
 
@@ -221,24 +286,25 @@ function registerWorkflowHandlers(): void {
               browserManager,
               'https://172.16.1.210:8100/dispatcher/',
               async (warningMsg) => {
-                // Safety rule: Never auto-confirm concurrent logout
-                console.warn('SAP Concurrent Login Warning:', warningMsg);
-                return false;
+                console.log('SAP Concurrent Login Auto-Confirm:', warningMsg);
+                return true;
               }
             );
 
             const loginRes = await sapAdapter.login({
-              username: String(sapMeta.username || ''),
+              username: sapUsername,
               password: sapPassword,
               server: targetServer,
               company: targetCompany,
+            }, (progressMsg: string) => {
+              broadcastStep(progressMsg, 'RUNNING', 4);
             });
 
             db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED');
             broadcastStep('SAP Business One Đăng nhập', loginRes.success ? 'SUCCESS' : 'FAILED', 4);
           } else {
             db.updateWorkflowStep(stepSap.id, 'SKIPPED');
-            broadcastStep('SAP: Chưa cấu hình mật khẩu trong Settings', 'SKIPPED', 4);
+            broadcastStep('SAP: Chưa có mật khẩu SAP', 'SKIPPED', 4);
           }
         }
 
@@ -276,6 +342,40 @@ function registerWorkflowHandlers(): void {
 }
 
 function registerCredentialHandlers(): void {
+  ipcMain.handle('credentials:get', async (_event, payload: { accountName: string }) => {
+    if (!db) return null;
+    const meta = db.listCredentialMeta().find((m) => m.accountName === payload.accountName || m.account_name === payload.accountName);
+    let password = '';
+    try {
+      const p = await credentialManager.getPassword(payload.accountName);
+      if (p) password = p;
+    } catch {
+      // Fallback
+    }
+
+    if (!password) {
+      const cached = db.getSetting(`cred_${payload.accountName}`);
+      if (cached) {
+        try {
+          password = SecureStorage.decrypt(cached);
+        } catch {
+          try {
+            password = Buffer.from(cached, 'base64').toString('utf-8');
+          } catch {}
+        }
+      }
+    }
+
+    return {
+      accountName: payload.accountName,
+      username: meta?.username || '',
+      password: password || '',
+      application: meta?.application || '',
+      url: meta?.url || '',
+      hasPassword: Boolean(password)
+    };
+  });
+
   ipcMain.handle('credentials:save', async (_event, payload: {
     accountName: string;
     username: string;
@@ -285,9 +385,22 @@ function registerCredentialHandlers(): void {
   }) => {
     if (!db) throw new Error('Database not initialized');
     
-    // Store in native OS Credential Vault
-    await credentialManager.setPassword(payload.accountName, payload.password);
+    // 1. Store in native OS Credential Vault
+    try {
+      await credentialManager.setPassword(payload.accountName, payload.password);
+    } catch (e) {
+      console.warn('keytar setPassword warning:', (e as Error).message);
+    }
     
+    // 2. Cache encrypted fallback in sqlite settings table using authenticated AES-256-GCM
+    try {
+      const enc = SecureStorage.encrypt(payload.password);
+      db.setSetting(`cred_${payload.accountName}`, enc);
+    } catch (err) {
+      console.warn('SecureStorage encrypt fallback warning:', (err as Error).message);
+    }
+
+    // 3. Upsert metadata
     db.upsertCredentialMeta({
       id: payload.accountName,
       accountName: payload.accountName,
@@ -362,34 +475,168 @@ function registerSettingsHandlers(): void {
 }
 
 function registerNetworkHandlers(): void {
-  ipcMain.handle('network:check', async () => {
-    const check = async (hostname: string, port: number, isHttps: boolean): Promise<boolean> => {
-      try {
-        const client = isHttps ? https : http;
-        return await new Promise<boolean>((resolve) => {
-          const req = client.request(
-            { hostname, port, path: '/', method: 'HEAD', timeout: 5000, rejectUnauthorized: false },
-            () => resolve(true)
-          );
-          req.on('error', () => resolve(false));
-          req.on('timeout', () => resolve(false));
-          req.end();
-        });
-      } catch {
-        return false;
-      }
-    };
+  // Enhanced live socket & HTTP endpoint probe
+  const probeEndpoint = async (urlStr: string, defaultPort: number, timeoutMs = 2500): Promise<{
+    reachable: boolean;
+    latencyMs: number;
+    error?: string;
+    statusCode?: number;
+  }> => {
+    const start = Date.now();
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(urlStr);
+    } catch {
+      return { reachable: false, latencyMs: 0, error: 'Định dạng URL không hợp lệ' };
+    }
 
-    const [sap, pos] = await Promise.all([
-      check('172.16.1.210', 8100, true),
-      check('172.16.1.200', 80, false),
+    const isHttps = parsedUrl.protocol === 'https:';
+    const port = parsedUrl.port ? parseInt(parsedUrl.port, 10) : defaultPort;
+    const hostname = parsedUrl.hostname;
+
+    // Step 1: TCP handshake probe for low-level reachability & fast failure
+    const tcpResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const socket = new net.Socket();
+      let finished = false;
+
+      const done = (ok: boolean, err?: string) => {
+        if (finished) return;
+        finished = true;
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve({ ok, error: err });
+      };
+
+      socket.setTimeout(timeoutMs);
+      socket.on('connect', () => done(true));
+      socket.on('timeout', () => done(false, 'Hết thời gian chờ (Timeout 2.5s) - Chưa kết nối VPN hoặc ngoài mạng nội bộ'));
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        let msg = err.message;
+        if (err.code === 'ECONNREFUSED') {
+          msg = 'Máy chủ từ chối kết nối (Cổng đang đóng hoặc dịch vụ tắt)';
+        } else if (err.code === 'ENETUNREACH' || err.code === 'EHOSTUNREACH') {
+          msg = 'Mạng nội bộ không thể định tuyến (Chưa bật VPN doanh nghiệp)';
+        }
+        done(false, msg);
+      });
+
+      socket.connect(port, hostname);
+    });
+
+    if (!tcpResult.ok) {
+      return {
+        reachable: false,
+        latencyMs: Date.now() - start,
+        error: tcpResult.error || 'Không thể kết nối máy chủ',
+      };
+    }
+
+    // Step 2: HTTP/HTTPS probe (permits self-signed certificates for internal SAP servers)
+    return new Promise((resolve) => {
+      const client = isHttps ? https : http;
+      const req = client.request(
+        {
+          hostname,
+          port,
+          path: parsedUrl.pathname || '/',
+          method: 'HEAD',
+          timeout: timeoutMs,
+          rejectUnauthorized: false, // Internal SAP self-signed SSL certs supported
+        },
+        (res) => {
+          resolve({
+            reachable: true,
+            latencyMs: Date.now() - start,
+            statusCode: res.statusCode,
+          });
+        }
+      );
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({
+          reachable: true, // TCP succeeded, but HTTP timed out
+          latencyMs: Date.now() - start,
+          error: 'Phản hồi HTTP chậm, nhưng cổng TCP đã mở',
+        });
+      });
+
+      req.on('error', () => {
+        // Fallback: TCP connection established, so server is alive at network layer
+        resolve({
+          reachable: true,
+          latencyMs: Date.now() - start,
+        });
+      });
+
+      req.end();
+    });
+  };
+
+  ipcMain.handle('network:probe-endpoints', async (_event, endpoints?: Array<{ id: string; url: string; port: number }>) => {
+    const defaultEndpoints = [
+      { id: 'sap-web', name: 'SAP Business One Web Client', url: 'https://172.16.1.210:8100/dispatcher/', port: 8100 },
+      { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: 'https://172.16.0.201:40000/ControlCenter/sbo.html', port: 40000 },
+      { id: 'pos-web', name: 'POS RPFO Web Application', url: 'http://172.16.1.200/', port: 80 },
+    ];
+
+    const targets = endpoints && endpoints.length > 0 ? endpoints : defaultEndpoints;
+
+    const results = await Promise.all(
+      targets.map(async (ep) => {
+        const probe = await probeEndpoint(ep.url, ep.port);
+        return {
+          id: ep.id,
+          url: ep.url,
+          port: ep.port,
+          reachable: probe.reachable,
+          latencyMs: probe.latencyMs,
+          statusCode: probe.statusCode,
+          error: probe.error,
+          checkedAt: new Date().toISOString(),
+        };
+      })
+    );
+
+    return {
+      results,
+      checkedAt: new Date().toISOString(),
+    };
+  });
+
+  ipcMain.handle('network:check', async (_event, payload?: { sapHost?: string; sapPort?: number; posHost?: string; posPort?: number }) => {
+    const sapHost = payload?.sapHost || '172.16.1.210';
+    const sapPort = payload?.sapPort || 8100;
+    const posHost = payload?.posHost || '172.16.1.200';
+    const posPort = payload?.posPort || 80;
+
+    const [sapProbe, posProbe] = await Promise.all([
+      probeEndpoint(`https://${sapHost}:${sapPort}/`, sapPort),
+      probeEndpoint(`http://${posHost}:${posPort}/`, posPort),
     ]);
 
-    return { sap, pos, checkedAt: new Date().toISOString() };
+    return {
+      sap: sapProbe.reachable,
+      pos: posProbe.reachable,
+      sapLatency: sapProbe.latencyMs,
+      posLatency: posProbe.latencyMs,
+      sapError: sapProbe.error,
+      posError: posProbe.error,
+      checkedAt: new Date().toISOString(),
+    };
   });
 }
 
 function registerFileHandlers(): void {
+  ipcMain.handle('dialog:open-directory', async (_event, defaultPath?: string) => {
+    const result = await dialog.showOpenDialog({
+      defaultPath: defaultPath || 'D:\\FM_AUTO_OPS',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle('files:open-dir', async (_event, payload: { path: string }) => {
     await shell.openPath(payload.path);
     return { opened: true };

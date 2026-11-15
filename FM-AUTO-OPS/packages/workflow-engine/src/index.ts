@@ -13,20 +13,33 @@ export interface WorkflowOptions {
   browserManager: BrowserManager;
   db: FMDatabase;
   onStepChange?: StepCallback;
+  fromDate?: string;
+  toDate?: string;
+  dateRangeRule?: 'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'THIS_MONTH' | string;
+  storeFilter?: string;
+  slocFilter?: string;
+  itemFilter?: string;
+  salesOutputDir?: string;
+  salesFileNameTemplate?: string;
+  inventoryOutputDir?: string;
+  inventoryFileNameTemplate?: string;
 }
 
 export class DailyProcurementRunner {
   private browserManager: BrowserManager;
   private db: FMDatabase;
   private onStepChange?: StepCallback;
+  private options: WorkflowOptions;
 
   constructor(options: WorkflowOptions) {
     this.browserManager = options.browserManager;
     this.db = options.db;
     this.onStepChange = options.onStepChange;
+    this.options = options;
   }
 
-  async run(): Promise<{ success: boolean; runId: string; status: string; errors: string[] }> {
+  async run(overrideOptions?: Partial<WorkflowOptions>): Promise<{ success: boolean; runId: string; status: string; errors: string[] }> {
+    const opts = { ...this.options, ...overrideOptions };
     const run = this.db.createWorkflowRun('DAILY_PROCUREMENT');
     const errors: string[] = [];
     let hasInventorySuccess = false;
@@ -44,14 +57,21 @@ export class DailyProcurementRunner {
       const step2 = this.db.createWorkflowStep(run.id, 'Download Sales Report', 2);
       try {
         const pos = new POSAdapter(this.browserManager);
-        const dateRange = POSAdapter.calculateDateRange('TODAY');
+        let fromDate = opts.fromDate;
+        let toDate = opts.toDate;
+        if (!fromDate || !toDate) {
+          const rule = opts.dateRangeRule || 'TODAY';
+          const calculated = POSAdapter.calculateDateRange(rule);
+          fromDate = fromDate || calculated.from;
+          toDate = toDate || calculated.to;
+        }
         
         const salesResult = await pos.downloadSalesTransactionDetail({
-          fromDate: dateRange.from,
-          toDate: dateRange.to,
-          storeFilter: 'All',
-          outputDir: 'D:\\FM_AUTO_OPS\\Sales',
-          fileNameTemplate: 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
+          fromDate,
+          toDate,
+          storeFilter: opts.storeFilter || 'All',
+          outputDir: opts.salesOutputDir || 'D:\\FM_AUTO_OPS\\Sales',
+          fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
         });
 
         // Validate
@@ -98,9 +118,11 @@ export class DailyProcurementRunner {
       try {
         const pos = new POSAdapter(this.browserManager);
         const invResult = await pos.downloadInventoryOnhand({
-          storeFilter: 'All',
-          outputDir: 'D:\\FM_AUTO_OPS\\Inventory',
-          fileNameTemplate: 'Inventory_{YYYY-MM-DD}.xlsx',
+          storeFilter: opts.storeFilter || 'All',
+          slocFilter: opts.slocFilter,
+          itemFilter: opts.itemFilter,
+          outputDir: opts.inventoryOutputDir || 'D:\\FM_AUTO_OPS\\Inventory',
+          fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_{YYYY-MM-DD}.xlsx',
         });
 
         const validator = new ExcelValidator();

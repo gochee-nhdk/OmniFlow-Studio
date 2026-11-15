@@ -205,9 +205,6 @@ importers:
       date-fns-tz:
         specifier: ^3.2.0
         version: 3.2.0(date-fns@4.4.0)
-      electron:
-        specifier: ^45.3.1
-        version: 45.3.1(supports-color@7.2.0)
       keytar:
         specifier: ^7.9.0
         version: 7.9.0
@@ -224,6 +221,9 @@ importers:
       '@types/uuid':
         specifier: ^10.0.0
         version: 10.0.0
+      electron:
+        specifier: ^45.3.1
+        version: 45.3.1(supports-color@7.2.0)
       electron-builder:
         specifier: ^25.0.0
         version: 25.1.8(bluebird@3.7.2)(electron-builder-squirrel-windows@25.1.8)(supports-color@7.2.0)
@@ -233,6 +233,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@fm/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.107.1(@types/react@18.3.31)(react@18.3.1)
@@ -301,6 +304,9 @@ importers:
 
   packages/database:
     dependencies:
+      '@fm/security':
+        specifier: workspace:*
+        version: link:../security
       uuid:
         specifier: ^11.0.0
         version: 11.1.1

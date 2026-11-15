@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { LogRedactor } from '@fm/security';
 import { SCHEMA_SQL } from './schema';
 
 type WorkflowStatus = string;
@@ -265,6 +266,8 @@ export class FMDatabase {
     technicalDetails?: string;
     recoveryAction?: RecoveryAction;
   }): void {
+    const sanitizedMsg = String(LogRedactor.redact(data.message));
+    const sanitizedDetails = data.technicalDetails ? String(LogRedactor.redact(data.technicalDetails)) : null;
     this.db
       .prepare(`
         INSERT INTO error_logs
@@ -277,8 +280,8 @@ export class FMDatabase {
         data.stepId ?? null,
         data.errorType,
         data.severity,
-        data.message,
-        data.technicalDetails ?? null,
+        sanitizedMsg,
+        sanitizedDetails,
         data.recoveryAction ?? null
       );
   }
@@ -363,12 +366,19 @@ export class FMDatabase {
   }
 
   audit(action: string, target?: string, details?: Record<string, unknown>): void {
+    let sanitizedDetails: string | null = null;
+    if (details) {
+      sanitizedDetails = String(LogRedactor.redact(details));
+    }
+    const sanitizedTarget = target ? String(LogRedactor.redact(target)) : null;
+    const sanitizedAction = action ? String(LogRedactor.redact(action)) : action;
+
     this.db
       .prepare(`
         INSERT INTO audit_logs (id, action, target, details)
         VALUES (?, ?, ?, ?)
       `)
-      .run(uuidv4(), action, target ?? null, details ? JSON.stringify(details) : null);
+      .run(uuidv4(), sanitizedAction, sanitizedTarget, sanitizedDetails);
   }
 
   close(): void {

@@ -11,9 +11,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
   },
   "dependencies": {
+    "@fm/security": "workspace:*",
     "uuid": "^11.0.0"
   },
   "devDependencies": {

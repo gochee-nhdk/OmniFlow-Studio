@@ -229,7 +229,157 @@ export type IPCChannel =
   | 'files:history'
   | 'errors:list'
   | 'errors:clear'
-  | 'user-action:respond';
+  | 'user-action:respond'
+  | 'enterprise:list'
+  | 'enterprise:save'
+  | 'enterprise:delete'
+  | 'enterprise:setActive'
+  | 'enterprise:get-active';
+
+// ============================================================
+// OmniFlow Studio — Generic Multi-Enterprise Profile Types
+// ============================================================
+
+export type ERPType = 'SAP_B1' | 'ODOO' | 'NETSUITE' | 'CUSTOM_WEB';
+
+export interface EnterpriseMapping {
+  id: string;
+  name: string;
+}
+
+export interface EnterpriseProfile {
+  id: string;
+  name: string;
+  code: string;
+  erpType: ERPType;
+  erpUrl: string;
+  server?: string;
+  database?: string;
+  companyName: string;
+  companySchema: string;
+  storeMappings?: Array<{ id: string; name: string }>;
+  slocMappings?: Array<{ id: string; name: string }>;
+  namingTemplate?: string;
+  exportPath?: string;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface NamingTemplateContext {
+  orgCode?: string;
+  reportType?: string;
+  fromDate?: string;
+  toDate?: string;
+  timestamp?: string;
+  storeId?: string;
+  slocId?: string;
+  itemCode?: string;
+  [key: string]: any;
+}
+
+export const DEFAULT_ENTERPRISE_PROFILES: EnterpriseProfile[] = [
+  {
+    id: 'profile-fm-pro',
+    name: 'CÔNG TY TNHH Thương Mại LARIA',
+    code: 'FM_PRO',
+    erpType: 'SAP_B1',
+    erpUrl: 'https://172.16.1.210:8100/dispatcher/',
+    server: 'SBO@172.16.0.201:30013',
+    database: 'FM_PRO',
+    companyName: 'CÔNG TY TNHH Thương Mại LARIA (FM_PRO)',
+    companySchema: 'FM_PRO',
+    namingTemplate: '{{orgCode}}_{{reportType}}_{{fromDate}}_{{toDate}}.xlsx',
+    exportPath: 'D:\\FM_AUTO_OPS',
+    isActive: true,
+    storeMappings: [
+      { id: 'FF0101', name: 'Kho Cửa Hàng CH FF01' },
+      { id: 'SFM0101', name: 'Kho Cửa Hàng CH FM01' },
+      { id: 'SFM0201', name: 'Kho Cửa Hàng CH FM02' },
+      { id: 'SFM0301', name: 'Kho Cửa Hàng CD FM03' },
+      { id: 'SFM0401', name: 'Kho Cửa Hàng CH FM04' },
+      { id: 'SFM0501', name: 'Kho Cửa Hàng CH FM05 - HOT' },
+      { id: 'SFM0601', name: 'Kho Cửa Hàng CH FM06' },
+      { id: 'SFM06QT1', name: 'Kho Cửa Hàng CH FM06QT' },
+      { id: 'SFM0701', name: 'Kho Cửa Hàng CH FM07' },
+      { id: 'SFM07AP1', name: 'Kho Cửa Hàng CH FM07AP' },
+      { id: 'SFM0801', name: 'Kho Cửa Hàng CH FM08' },
+      { id: 'SFM0901', name: 'Kho Cửa Hàng CH FM09' },
+      { id: 'SFM1001', name: 'Kho Cửa Hàng CH FM10' },
+    ],
+    slocMappings: [
+      { id: 'DC0101', name: 'KHO DC01 - NƠ TRANG LONG' },
+      { id: 'DC0201', name: 'KHO DC02 - QL13' },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-11-14T00:00:00.000Z',
+  },
+  {
+    id: 'profile-odoo-demo',
+    name: 'Odoo Global Retail Corp',
+    code: 'ODOO_GLOBAL',
+    erpType: 'ODOO',
+    erpUrl: 'https://erp.global-retail.example.com',
+    server: 'odoo-prod-cluster-01',
+    database: 'global_retail_db',
+    companyName: 'Odoo Global Retail Group',
+    companySchema: 'public',
+    namingTemplate: '{{orgCode}}_{{reportType}}_{{timestamp}}.xlsx',
+    exportPath: 'D:\\FM_AUTO_OPS\\Odoo',
+    isActive: false,
+    storeMappings: [
+      { id: 'WH01', name: 'Central Warehouse Berlin' },
+      { id: 'STR01', name: 'Flagship Store Tokyo' },
+    ],
+    slocMappings: [
+      { id: 'MAIN', name: 'Main Stock Location' },
+      { id: 'TRANSIT', name: 'In-Transit Storage' },
+    ],
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-11-14T00:00:00.000Z',
+  },
+  {
+    id: 'profile-netsuite-demo',
+    name: 'NetSuite Enterprise Commerce',
+    code: 'NS_ENT',
+    erpType: 'NETSUITE',
+    erpUrl: 'https://system.netsuite.com',
+    server: 'ns-us-east-1',
+    database: 'netsuite_ent_prod',
+    companyName: 'OmniFlow Commerce Solutions',
+    companySchema: 'commerce',
+    namingTemplate: '{{reportType}}_{{orgCode}}_{{fromDate}}_{{toDate}}.xlsx',
+    exportPath: 'D:\\FM_AUTO_OPS\\NetSuite',
+    isActive: false,
+    storeMappings: [
+      { id: 'US-EAST', name: 'US East Distribution Center' },
+      { id: 'EU-CENTRAL', name: 'EU Central Hub' },
+    ],
+    slocMappings: [
+      { id: 'BIN-A1', name: 'High-Velocity Pick Bin A1' },
+      { id: 'BULK-01', name: 'Bulk Pallet Racking' },
+    ],
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-11-14T00:00:00.000Z',
+  },
+  {
+    id: 'profile-custom-web-demo',
+    name: 'Custom Web POS & ERP Hub',
+    code: 'CUSTOM_POS',
+    erpType: 'CUSTOM_WEB',
+    erpUrl: 'http://172.16.1.200/',
+    companyName: 'Dynamic Enterprise POS & ERP',
+    companySchema: 'custom_schema',
+    namingTemplate: '{{orgCode}}_{{reportType}}_{{timestamp}}.xlsx',
+    exportPath: 'D:\\FM_AUTO_OPS\\Custom',
+    isActive: false,
+    storeMappings: [
+      { id: 'ALL', name: 'All Web Stores' },
+    ],
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-11-14T00:00:00.000Z',
+  },
+];
 
 export interface IPCResponse<T = unknown> {
   id: string;

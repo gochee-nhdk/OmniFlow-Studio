@@ -58,6 +58,12 @@ export interface NetworkStatus {
   lastChecked?: string;
 }
 
+export interface NetworkFeedback {
+  message: string;
+  type: 'success' | 'warning' | 'error' | 'info';
+  timestamp: number;
+}
+
 export interface WorkflowProgress {
   runId: string;
   workflowType: string;
@@ -73,12 +79,15 @@ interface AgentStore {
   recentRuns: WorkflowRun[];
   errors: ErrorEntry[];
   networkStatus: NetworkStatus;
+  isCheckingNetwork: boolean;
+  networkFeedback: NetworkFeedback | null;
   isLoading: boolean;
   pendingUserAction: { message: string; runId: string } | null;
   activeProgress: WorkflowProgress | null;
 
   refreshStatus: () => Promise<void>;
-  checkNetwork: () => Promise<void>;
+  checkNetwork: (options?: { sapHost?: string; sapPort?: number; posHost?: string; posPort?: number; showFeedback?: boolean }) => Promise<NetworkStatus>;
+  dismissNetworkFeedback: () => void;
   startWorkflow: (type: string, payload?: unknown) => Promise<void>;
   stopWorkflow: () => Promise<void>;
   respondToUserAction: (runId: string, confirmed: boolean) => Promise<void>;
@@ -104,9 +113,15 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     recentRuns: [],
     errors: [],
     networkStatus: { sap: true, pos: true },
+    isCheckingNetwork: false,
+    networkFeedback: null,
     isLoading: false,
     pendingUserAction: null,
     activeProgress: null,
+
+    dismissNetworkFeedback: () => {
+      set({ networkFeedback: null });
+    },
 
     refreshStatus: async () => {
       try {
@@ -117,12 +132,61 @@ export const useAgentStore = create<AgentStore>((set, get) => {
       }
     },
 
-    checkNetwork: async () => {
+    checkNetwork: async (options) => {
+      set({ isCheckingNetwork: true });
       try {
-        const result = await invoke<NetworkStatus>('network:check');
-        set({ networkStatus: { ...result, lastChecked: new Date().toISOString() } });
+        const result = await invoke<NetworkStatus>('network:check', {
+          sapHost: options?.sapHost,
+          sapPort: options?.sapPort,
+          posHost: options?.posHost,
+          posPort: options?.posPort,
+        });
+        const updatedStatus = { ...result, lastChecked: new Date().toISOString() };
+        set({ networkStatus: updatedStatus });
+
+        if (options?.showFeedback) {
+          const bothOk = result.sap && result.pos;
+          const posOk = result.pos;
+          const sapOk = result.sap;
+          let message = 'Đã kiểm tra kết nối: ';
+          let type: 'success' | 'warning' | 'error' = 'success';
+
+          if (bothOk) {
+            message += 'Cả POS và SAP đều phản hồi tốt (Sẵn sàng)';
+            type = 'success';
+          } else if (!posOk && !sapOk) {
+            message += 'Không thể kết nối cả POS (172.16.1.200) và SAP SLD (172.16.1.210:8100)';
+            type = 'error';
+          } else if (!posOk) {
+            message += 'POS Mất kết nối (172.16.1.200), SAP SLD hoạt động';
+            type = 'warning';
+          } else {
+            message += 'POS kết nối tốt, SAP SLD Mất kết nối (172.16.1.210:8100)';
+            type = 'warning';
+          }
+
+          set({
+            networkFeedback: {
+              message,
+              type,
+              timestamp: Date.now(),
+            },
+          });
+        }
+        return updatedStatus;
       } catch {
-        // Offline fallback
+        const fallbackStatus = { sap: false, pos: false, lastChecked: new Date().toISOString() };
+        set({
+          networkStatus: fallbackStatus,
+          networkFeedback: options?.showFeedback ? {
+            message: 'Không thể thăm dò trạng thái mạng (Lỗi IPC)',
+            type: 'error',
+            timestamp: Date.now(),
+          } : get().networkFeedback,
+        });
+        return fallbackStatus;
+      } finally {
+        set({ isCheckingNetwork: false });
       }
     },
 

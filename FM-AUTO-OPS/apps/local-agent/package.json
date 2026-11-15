@@ -1,6 +1,9 @@
 {
   "name": "@fm/local-agent",
+  "productName": "FM AUTO OPS",
   "version": "1.0.0",
+  "description": "FM AUTO OPS — Enterprise Procurement & RPA Automation",
+  "author": "FM AUTO OPS",
   "private": true,
   "type": "commonjs",
   "main": "dist/main/index.js",
@@ -9,7 +12,40 @@
     "build": "tsc",
     "build:installer": "npm run build && electron-builder",
     "typecheck": "tsc --noEmit",
+    "test": "node --test",
     "start": "electron dist/main/index.js"
+  },
+  "build": {
+    "appId": "com.fmauto.ops",
+    "productName": "FM AUTO OPS",
+    "directories": {
+      "output": "../../release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../apps/web/dist",
+        "to": "web/dist",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "../../assets/app-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "dependencies": {
     "@fm/browser-engine": "workspace:*",
@@ -19,7 +55,6 @@
     "@fm/sap-adapter": "workspace:*",
     "@fm/security": "workspace:*",
     "@fm/shared-types": "workspace:*",
-    "electron": "^45.3.1",
     "playwright": "^1.65.0",
     "keytar": "^7.9.0",
     "uuid": "^11.0.0",
@@ -29,6 +64,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
+    "electron": "^45.3.1",
     "typescript": "^5.7.0",
     "electron-builder": "^25.0.0"
   }

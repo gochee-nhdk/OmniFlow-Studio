@@ -1,0 +1,34 @@
+node_modules/
+dist/
+.turbo/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+*.sqlite
+*.sqlite-journal
+*.db
+release/
+out/
+.DS_Store
+Thumbs.db
+Temp/
+.agents/
+
+# External tools & scripts
+tools/
+FM-AUTO-OPS/tools/
+tool/
+
+# Temporary diagnostic & test scripts
+diagnose-*.mjs
+test-*.mjs
+inspect-*.mjs
+temp-*.txt
+FM-AUTO-OPS/diagnose-*.mjs
+FM-AUTO-OPS/test-*.mjs
+FM-AUTO-OPS/inspect-*.mjs
+FM-AUTO-OPS/temp-*.txt

@@ -1,35 +1,34 @@
-﻿# Creates 1-Click Desktop Shortcuts for FM AUTO OPS
+﻿# Creates Single 1-Click Desktop Shortcut for FM AUTO OPS with custom icon and smart launcher
 
 $desktopPaths = @(
-  [Environment]::GetFolderPath("Desktop"),
   "D:\OneDrive\Máy tính",
+  [Environment]::GetFolderPath("Desktop"),
   "C:\Users\$env:USERNAME\Desktop"
 ) | Select-Object -Unique
 
 $wshShell = New-Object -ComObject WScript.Shell
+$iconPath = "d:\tool auto\FM-AUTO-OPS\assets\app-icon.ico,0"
+$vbsPath = "d:\tool auto\FM-AUTO-OPS\FM_AUTO_OPS.vbs"
 
 foreach ($d in $desktopPaths) {
   if (Test-Path $d) {
-    # 1. Desktop App Shortcut
-    $scApp = $wshShell.CreateShortcut((Join-Path $d "FM AUTO OPS (Desktop App).lnk"))
-    $scApp.TargetPath = "wscript.exe"
-    $scApp.Arguments = "`"d:\tool auto\FM-AUTO-OPS\FM_AUTO_OPS.vbs`""
-    $scApp.WorkingDirectory = "d:\tool auto\FM-AUTO-OPS"
-    $scApp.Description = "FM AUTO OPS — Desktop Native Application"
-    $scApp.WindowStyle = 7
-    $scApp.Save()
+    # Remove older redundant shortcuts
+    @("FM AUTO OPS (Desktop App).lnk", "FM AUTO OPS (Web Dashboard).lnk") | ForEach-Object {
+      $old = Join-Path $d $_
+      if (Test-Path $old) { Remove-Item $old -Force }
+    }
 
-    # 2. Web Dashboard Shortcut (Instant Server + Browser)
-    $scWeb = $wshShell.CreateShortcut((Join-Path $d "FM AUTO OPS (Web Dashboard).lnk"))
-    $scWeb.TargetPath = "wscript.exe"
-    $scWeb.Arguments = "`"d:\tool auto\FM-AUTO-OPS\Open_Web_Dashboard.vbs`""
-    $scWeb.WorkingDirectory = "d:\tool auto\FM-AUTO-OPS"
-    $scWeb.Description = "FM AUTO OPS — Browser Dashboard (Instant 1-Click)"
-    $scWeb.WindowStyle = 7
-    $scWeb.Save()
+    # Create the single primary shortcut
+    $lnk = Join-Path $d "FM AUTO OPS.lnk"
+    $sc = $wshShell.CreateShortcut($lnk)
+    $sc.TargetPath = "wscript.exe"
+    $sc.Arguments = "`"$vbsPath`""
+    $sc.WorkingDirectory = "d:\tool auto\FM-AUTO-OPS"
+    $sc.IconLocation = $iconPath
+    $sc.Description = "FM AUTO OPS — Enterprise Procurement & RPA Tool"
+    $sc.WindowStyle = 1
+    $sc.Save()
 
-    Write-Host "✓ 1-Click Shortcuts created on Desktop ($d):"
-    Write-Host "  · FM AUTO OPS (Desktop App).lnk"
-    Write-Host "  · FM AUTO OPS (Web Dashboard).lnk"
+    Write-Host "Created single 1-click shortcut: $lnk"
   }
 }
