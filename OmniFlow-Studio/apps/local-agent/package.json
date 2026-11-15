@@ -1,0 +1,72 @@
+{
+    "name":  "@fm/local-agent",
+    "productName":  "OmniFlow Studio",
+    "version":  "1.0.0",
+    "description":  "OmniFlow Studio — Enterprise ERP \u0026 POS Automation Platform",
+    "author":  "OmniFlow Studio",
+    "private":  true,
+    "type":  "commonjs",
+    "main":  "dist/main/index.js",
+    "scripts":  {
+                    "dev":  "electron src/main/index.ts",
+                    "build":  "tsc",
+                    "build:installer":  "npm run build \u0026\u0026 electron-builder",
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "node --test",
+                    "start":  "electron dist/main/index.js"
+                },
+    "build":  {
+                  "appId":  "com.omniflow.studio",
+                  "productName":  "OmniFlow Studio",
+                  "directories":  {
+                                      "output":  "../../release"
+                                  },
+                  "files":  [
+                                "dist/**/*",
+                                "package.json"
+                            ],
+                  "extraResources":  [
+                                         {
+                                             "from":  "../../apps/web/dist",
+                                             "to":  "web/dist",
+                                             "filter":  [
+                                                            "**/*"
+                                                        ]
+                                         }
+                                     ],
+                  "win":  {
+                              "target":  [
+                                             "nsis",
+                                             "zip"
+                                         ],
+                              "icon":  "../../assets/app-icon.ico"
+                          },
+                  "nsis":  {
+                               "oneClick":  false,
+                               "allowToChangeInstallationDirectory":  true,
+                               "createDesktopShortcut":  true
+                           }
+              },
+    "dependencies":  {
+                         "@fm/browser-engine":  "workspace:*",
+                         "@fm/database":  "workspace:*",
+                         "@fm/file-engine":  "workspace:*",
+                         "@fm/pos-adapter":  "workspace:*",
+                         "@fm/sap-adapter":  "workspace:*",
+                         "@fm/security":  "workspace:*",
+                         "@fm/shared-types":  "workspace:*",
+                         "playwright":  "^1.65.0",
+                         "keytar":  "^7.9.0",
+                         "uuid":  "^11.0.0",
+                         "date-fns":  "^4.1.0",
+                         "date-fns-tz":  "^3.2.0"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22.0.0",
+                            "@types/uuid":  "^10.0.0",
+                            "electron":  "^45.3.1",
+                            "typescript":  "^5.7.0",
+                            "electron-builder":  "^25.0.0"
+                        },
+    "license":  "MIT"
+}

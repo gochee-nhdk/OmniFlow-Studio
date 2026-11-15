@@ -1,0 +1,26 @@
+{
+    "name":  "@fm/file-engine",
+    "version":  "1.0.0",
+    "private":  true,
+    "type":  "commonjs",
+    "main":  "./dist/index.js",
+    "types":  "./dist/index.d.ts",
+    "exports":  {
+                    ".":  "./dist/index.js"
+                },
+    "scripts":  {
+                    "build":  "tsc",
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "node --test"
+                },
+    "dependencies":  {
+                         "adm-zip":  "^0.6.1",
+                         "exceljs":  "^4.4.0"
+                     },
+    "devDependencies":  {
+                            "@types/adm-zip":  "^0.6.0",
+                            "@types/node":  "^22.0.0",
+                            "typescript":  "^5.7.0"
+                        },
+    "license":  "MIT"
+}

@@ -1,0 +1,30 @@
+{
+    "name":  "@fm/pos-adapter",
+    "version":  "1.0.0",
+    "private":  true,
+    "type":  "commonjs",
+    "main":  "./dist/index.js",
+    "types":  "./dist/index.d.ts",
+    "exports":  {
+                    ".":  "./dist/index.js",
+                    "./selectors":  "./dist/selectors.js"
+                },
+    "scripts":  {
+                    "build":  "tsc",
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "node --test"
+                },
+    "dependencies":  {
+                         "@fm/browser-engine":  "workspace:*",
+                         "@fm/file-engine":  "workspace:*",
+                         "date-fns":  "^4.1.0",
+                         "date-fns-tz":  "^3.2.0",
+                         "exceljs":  "^4.4.0",
+                         "playwright":  "^1.65.0"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22.0.0",
+                            "typescript":  "^5.7.0"
+                        },
+    "license":  "MIT"
+}
