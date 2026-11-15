@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 dist/
 .turbo/
 *.log
@@ -20,6 +20,7 @@ Temp/
 
 # External tools & scripts
 tools/
+OmniFlow-Studio/tools/
 FM-AUTO-OPS/tools/
 tool/
 
@@ -28,6 +29,10 @@ diagnose-*.mjs
 test-*.mjs
 inspect-*.mjs
 temp-*.txt
+OmniFlow-Studio/diagnose-*.mjs
+OmniFlow-Studio/test-*.mjs
+OmniFlow-Studio/inspect-*.mjs
+OmniFlow-Studio/temp-*.txt
 FM-AUTO-OPS/diagnose-*.mjs
 FM-AUTO-OPS/test-*.mjs
 FM-AUTO-OPS/inspect-*.mjs
