@@ -78,6 +78,7 @@ export function registerAll(dbPath: string): void {
   db = new FMDatabase(dbPath);
   browserManager = new BrowserManager({
     downloadDir: path.join(app.getPath('userData'), 'Temp'),
+    userDataDir: app.getPath('userData'),
     headless: false,
   });
 
@@ -89,6 +90,18 @@ export function registerAll(dbPath: string): void {
   registerFileHandlers();
   registerErrorHandlers();
   registerEnterpriseHandlers();
+}
+
+export async function shutdownAutomationBrowser(): Promise<void> {
+  if (activeWorkflowRunId && browserManager) {
+    stopRequestedWorkflowRunId = activeWorkflowRunId;
+    await browserManager.closeAll();
+    const deadline = Date.now() + 8000;
+    while (activeWorkflowRunId && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  await browserManager?.shutdown();
 }
 
 function getMergedAppSettings(): Record<string, any> {

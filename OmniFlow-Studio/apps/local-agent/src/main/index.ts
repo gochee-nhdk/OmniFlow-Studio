@@ -2,7 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import { join } from 'path';
 import { mkdirSync, appendFileSync, existsSync } from 'fs';
 import { LogRedactor } from '@fm/security';
-import { registerAll } from './ipc/index';
+import { registerAll, shutdownAutomationBrowser } from './ipc/index';
 
 function log(msg: string): void {
   try {
@@ -25,6 +25,18 @@ process.on('unhandledRejection', (reason) => {
 });
 
 log('Electron main process starting up');
+
+let isBrowserShutdownComplete = false;
+let isBrowserShutdownInProgress = false;
+app.on('before-quit', (event) => {
+  if (isBrowserShutdownComplete || isBrowserShutdownInProgress) return;
+  event.preventDefault();
+  isBrowserShutdownInProgress = true;
+  void shutdownAutomationBrowser().finally(() => {
+    isBrowserShutdownComplete = true;
+    app.quit();
+  });
+});
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -104,13 +116,7 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     log('mainWindow closed — quitting application process cleanly');
     mainWindow = null;
-    try {
-      app.quit();
-    } catch {}
-    // Ensure all background handles release immediately
-    setTimeout(() => {
-      process.exit(0);
-    }, 200);
+    app.quit();
   });
 }
 
@@ -142,12 +148,7 @@ app.on('second-instance', () => {
 
 app.on('window-all-closed', () => {
   log('All windows closed. Quitting app process.');
-  try {
-    app.quit();
-  } catch {}
-  setTimeout(() => {
-    process.exit(0);
-  }, 200);
+  app.quit();
 });
 
 app.on('before-quit', () => {

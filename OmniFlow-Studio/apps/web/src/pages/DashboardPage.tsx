@@ -189,7 +189,7 @@ export default function DashboardPage() {
               <StatusBadge status={agentOnline ? 'online' : 'offline'} />
             </div>
             <p className="text-xs text-slate-500 mt-2">
-              Tự động hóa trình duyệt Edge/Chrome
+              Edge/Chrome với hồ sơ riêng của OmniFlow, không dùng chung tab cá nhân
             </p>
           </div>
           <div className="pt-3 mt-3 border-t border-slate-100 text-xs text-slate-400 font-mono">

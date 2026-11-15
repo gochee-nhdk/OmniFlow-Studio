@@ -1,6 +1,5 @@
-// FM AUTO OPS — Browser Manager
-// Manages separate persistent Chromium contexts for SAP and POS.
-// Prevents session cross-contamination between applications.
+// Dedicated browser session manager for ERP/POS automation.
+// The automation profile is persistent per Windows user, but isolated from the user's normal browser profile.
 
 import { chromium, BrowserContext, Page, Download } from 'playwright';
 import { join } from 'path';
@@ -8,227 +7,191 @@ import { mkdirSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 
 export type BrowserProfile = 'SAP' | 'POS';
+export type BrowserSessionMode = 'not-started' | 'dedicated' | 'attached';
 
-function getProfileBase(): string {
-  const appData = process.env['APPDATA'] ?? process.env['HOME'] ?? '.';
-  return join(appData, 'FM-AUTO-OPS', 'browser-profiles');
+function getProfileBase(userDataDir?: string): string {
+  const appData = userDataDir || process.env['APPDATA'] || process.env['HOME'] || '.';
+  return join(appData, 'browser-profiles');
 }
 
 export interface BrowserManagerOptions {
   downloadDir: string;
+  /** Electron's per-user app data directory. The automation browser profile lives below it. */
+  userDataDir?: string;
   headless?: boolean;
+  /** Attaching to an existing browser is opt-in because it shares cookies, tabs, and profile state. */
+  allowCdpAttach?: boolean;
   cdpPorts?: number[];
   onProgress?: (status: string) => void;
 }
 
 export class BrowserManager {
-  private contexts: Map<BrowserProfile, BrowserContext> = new Map();
-  private profilePages = new Map<BrowserProfile, Page>();
+  private readonly contexts = new Map<BrowserProfile, BrowserContext>();
+  private readonly profilePages = new Map<BrowserProfile, Page>();
   private sharedContext?: BrowserContext;
   private attachedOverCDP = false;
   private readonly downloadDir: string;
+  private readonly profileBase: string;
   private readonly headless: boolean;
   private readonly onProgress?: (status: string) => void;
   private readonly cdpPorts: number[];
+  private readonly allowCdpAttach: boolean;
 
   constructor(options: BrowserManagerOptions) {
     this.downloadDir = options.downloadDir;
+    this.profileBase = getProfileBase(options.userDataDir);
     this.headless = options.headless ?? false;
     this.onProgress = options.onProgress;
-    this.cdpPorts = options.cdpPorts || [9222, 9223, 9229];
-    if (!existsSync(this.downloadDir)) {
-      mkdirSync(this.downloadDir, { recursive: true });
-    }
+    this.allowCdpAttach = options.allowCdpAttach ?? false;
+    this.cdpPorts = options.cdpPorts ?? [];
+    mkdirSync(this.downloadDir, { recursive: true });
+  }
+
+  getSessionMode(): BrowserSessionMode {
+    if (!this.sharedContext) return 'not-started';
+    return this.attachedOverCDP ? 'attached' : 'dedicated';
   }
 
   private report(status: string): void {
-    if (this.onProgress) {
-      try { this.onProgress(status); } catch {}
-    }
+    try { this.onProgress?.(status); } catch {}
   }
 
-  private detectSystemDefaultBrowser(): { channel: 'chrome' | 'msedge'; exeName: string } {
+  private detectSystemDefaultBrowser(): { channel: 'chrome' | 'msedge' } {
     try {
       const result = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice" /v ProgId', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      if (/ChromeHTML/i.test(result)) return { channel: 'chrome', exeName: 'chrome.exe' };
-      if (/MSEdgeHTM/i.test(result)) return { channel: 'msedge', exeName: 'msedge.exe' };
+      if (/ChromeHTML/i.test(result)) return { channel: 'chrome' };
+      if (/MSEdgeHTM/i.test(result)) return { channel: 'msedge' };
     } catch {}
     try {
       const processes = execSync('tasklist /NH', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-      if (/chrome\.exe/i.test(processes)) return { channel: 'chrome', exeName: 'chrome.exe' };
+      if (/chrome\.exe/i.test(processes)) return { channel: 'chrome' };
     } catch {}
-    return { channel: 'msedge', exeName: 'msedge.exe' };
+    return { channel: 'msedge' };
+  }
+
+  private bindContextLifecycle(context: BrowserContext): void {
+    context.on('close', () => {
+      if (this.sharedContext === context) {
+        this.sharedContext = undefined;
+        this.attachedOverCDP = false;
+        this.contexts.clear();
+        this.profilePages.clear();
+      }
+    });
+    context.on('dialog', async (dialog) => {
+      this.report(`[BrowserManager] Dismissing an unexpected ${dialog.type()} dialog.`);
+      await dialog.dismiss().catch(() => null);
+    });
   }
 
   private async attachOrLaunchBrowser(): Promise<BrowserContext> {
-    if (this.sharedContext) return this.sharedContext;
-    for (const port of this.cdpPorts) {
+    if (this.sharedContext) {
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
-        if (!response.ok) continue;
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-        this.sharedContext = browser.contexts()[0] || await browser.newContext({ acceptDownloads: true });
-        this.attachedOverCDP = true;
-        this.report(`[BrowserManager] Attached to active browser on CDP port ${port}`);
+        const livePage = this.sharedContext.pages().find((page) => !page.isClosed());
+        if (livePage) await livePage.evaluate(() => 1);
+        else await this.sharedContext.newPage();
         return this.sharedContext;
-      } catch {}
+      } catch {
+        const staleContext = this.sharedContext;
+        const wasAttached = this.attachedOverCDP;
+        this.sharedContext = undefined;
+        this.attachedOverCDP = false;
+        this.contexts.clear();
+        this.profilePages.clear();
+        if (!wasAttached) await staleContext.close().catch(() => null);
+        this.report('[BrowserManager] Browser session stopped responding; recovering the automation session.');
+      }
     }
-    const detected = this.detectSystemDefaultBrowser();
-    const profileDir = join(getProfileBase(), 'unified-workspace');
+
+    if (this.allowCdpAttach) {
+      for (const port of this.cdpPorts) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
+          if (!response.ok) continue;
+          const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+          const context = browser.contexts()[0] || await browser.newContext({ acceptDownloads: true });
+          this.sharedContext = context;
+          this.attachedOverCDP = true;
+          this.bindContextLifecycle(context);
+          this.report(`[BrowserManager] Explicitly attached to browser on CDP port ${port}; cookies and profile are shared.`);
+          return context;
+        } catch {}
+      }
+    }
+
+    const profileDir = join(this.profileBase, 'omniflow-workspace');
     mkdirSync(profileDir, { recursive: true });
-    this.sharedContext = await chromium.launchPersistentContext(profileDir, {
+    const commonOptions = {
       headless: this.headless,
-      channel: detected.channel,
       acceptDownloads: true,
       downloadsPath: this.downloadDir,
       viewport: null,
       ignoreHTTPSErrors: true,
       locale: 'vi-VN',
       timezoneId: 'Asia/Ho_Chi_Minh',
-      args: ['--remote-debugging-port=9222', '--start-maximized', '--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
-    });
-    this.attachedOverCDP = false;
-    return this.sharedContext;
+      args: ['--start-maximized', '--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+    };
+    const preferred = this.detectSystemDefaultBrowser().channel;
+    const candidates: Array<'chrome' | 'msedge' | undefined> = [preferred, preferred === 'msedge' ? 'chrome' : 'msedge', undefined];
+    let lastError: unknown;
+    for (const channel of candidates) {
+      try {
+        const context = await chromium.launchPersistentContext(profileDir, {
+          ...commonOptions,
+          ...(channel ? { channel } : {}),
+        });
+        this.sharedContext = context;
+        this.attachedOverCDP = false;
+        this.bindContextLifecycle(context);
+        this.report(`[BrowserManager] Started an isolated ${channel || 'Chromium'} window with a persistent OmniFlow profile.`);
+        return context;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(`Không thể mở trình duyệt automation riêng. Hãy đóng cửa sổ automation OmniFlow đang bị treo rồi thử lại. ${(lastError as Error)?.message || ''}`);
   }
 
-  /**
-   * Get or create a persistent browser context for the given profile.
-   * SAP and POS use completely separate browser profiles.
-   */
+  /** POS and SAP get separate task tabs inside one tool-owned, persistent browser profile. */
   async getContext(profile: BrowserProfile): Promise<BrowserContext> {
-    if (this.sharedContext) {
-      this.contexts.set(profile, this.sharedContext);
-      return this.sharedContext;
-    }
-    const existing = this.contexts.get(profile);
-    if (existing) {
-      try {
-        const pages = existing.pages().filter(p => !p.isClosed());
-        if (pages.length > 0) {
-          // Ping the active page to verify context is healthy
-          await pages[0].evaluate(() => 1);
-          return existing;
-        }
-      } catch {
-        // Stale or dead context
-        this.report(`[BrowserManager] Stale context detected for ${profile}, recovering...`);
-      }
-      try {
-        await existing.close();
-      } catch {}
-      this.contexts.delete(profile);
-      await new Promise(r => setTimeout(r, 150));
-    }
-
-    return this.attachOrLaunchBrowser();
-
-    /* legacy per-profile launch retained below for source history */
-    const profileDir = join(getProfileBase(), profile.toLowerCase());
-    mkdirSync(profileDir, { recursive: true });
-
-    const launchOptions = {
-      headless: this.headless,
-      acceptDownloads: true,
-      downloadsPath: this.downloadDir,
-      viewport: null, // use full browser window size
-      ignoreHTTPSErrors: true,
-      args: [
-        '--start-maximized',
-        '--disable-blink-features=AutomationControlled',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-breakpad',
-        '--disable-component-update',
-        '--disable-default-apps',
-        '--disable-domain-reliability',
-        '--disable-ipc-flooding-protection',
-        '--disable-renderer-backgrounding',
-        '--disable-sync',
-        '--force-color-profile=srgb',
-        '--metrics-recording-only',
-        '--password-store=basic',
-      ],
-      locale: 'vi-VN',
-      timezoneId: 'Asia/Ho_Chi_Minh',
-    };
-
-    let context: BrowserContext;
-    try {
-      // Launch using system default browser Microsoft Edge first
-      context = await chromium.launchPersistentContext(profileDir, {
-        ...launchOptions,
-        channel: 'msedge',
-      });
-    } catch {
-      try {
-        // Fallback to Google Chrome
-        context = await chromium.launchPersistentContext(profileDir, {
-          ...launchOptions,
-          channel: 'chrome',
-        });
-      } catch {
-        // Fallback to bundled Chromium
-        context = await chromium.launchPersistentContext(profileDir, launchOptions);
-      }
-    }
-
-    context.on('close', () => {
-      this.report(`[BrowserManager] Context closed for ${profile}`);
-      this.contexts.delete(profile);
-    });
-
-    context.on('page', (page) => {
-      page.on('crash', () => {
-        console.warn(`[BrowserManager] Page crash detected on ${profile}`);
-        this.report(`[BrowserManager] Page crash on ${profile}, preparing self-healing reconnection`);
-      });
-    });
-
-    context.on('dialog', async (dialog) => {
-      console.log(`[BrowserManager] Unexpected dialog on ${profile}: ${dialog.type()} — "${dialog.message()}"`);
-      await dialog.dismiss().catch(() => null);
-    });
-
+    const context = await this.attachOrLaunchBrowser();
     this.contexts.set(profile, context);
     return context;
   }
 
-  /**
-   * Get the active or new page in the given profile context with automatic retry and recovery.
-   */
   async getPage(profile: BrowserProfile): Promise<Page> {
     const existing = this.profilePages.get(profile);
     if (existing && !existing.isClosed()) {
-      await existing.bringToFront().catch(() => null);
-      return existing;
+      try {
+        await existing.evaluate(() => 1);
+        await existing.bringToFront().catch(() => null);
+        return existing;
+      } catch {
+        this.profilePages.delete(profile);
+        this.report(`[BrowserManager] Replacing an unresponsive ${profile} tab.`);
+      }
     }
+
     const context = await this.attachOrLaunchBrowser();
     const openPages = context.pages().filter((page) => !page.isClosed());
-    let page: Page;
-    if (openPages.length === 1 && /^about:blank$|^(chrome|edge):\/\/newtab\//i.test(openPages[0].url())) {
-      page = openPages[0];
-    } else {
-      page = await context.newPage();
-    }
+    const alreadyAssignedPages = new Set(this.profilePages.values());
+    const blankPage = openPages.find((page) =>
+      !alreadyAssignedPages.has(page) && /^about:blank$|^(chrome|edge):\/\/newtab\//i.test(page.url())
+    );
+    const page = blankPage || await context.newPage();
     this.profilePages.set(profile, page);
-    await page.bringToFront().catch(() => null);
     this.contexts.set(profile, context);
+    page.on('close', () => {
+      if (this.profilePages.get(profile) === page) this.profilePages.delete(profile);
+    });
+    page.on('crash', () => {
+      this.report(`[BrowserManager] ${profile} tab crashed; it will be recreated on the next operation.`);
+    });
+    await page.bringToFront().catch(() => null);
     return page;
   }
 
-  /**
-   * Wait for a file download triggered by a user action.
-   * Uses Playwright's download event.
-   */
-  async waitForDownload(
-    page: Page,
-    triggerAction: () => Promise<void>,
-    timeoutMs = 60000
-  ): Promise<Download> {
+  async waitForDownload(page: Page, triggerAction: () => Promise<void>, timeoutMs = 60000): Promise<Download> {
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: timeoutMs }),
       triggerAction(),
@@ -236,16 +199,11 @@ export class BrowserManager {
     return download;
   }
 
-  /**
-   * Save a download to the specified destination.
-   */
   async saveDownload(download: Download, destPath: string): Promise<string> {
     await download.saveAs(destPath);
     const tempExtensions = ['.crdownload', '.tmp', '.part'];
     for (const ext of tempExtensions) {
-      if (destPath.endsWith(ext)) {
-        throw new Error(`Download appears incomplete — file has temp extension: ${ext}`);
-      }
+      if (destPath.endsWith(ext)) throw new Error(`Download appears incomplete — file has temp extension: ${ext}`);
     }
     return destPath;
   }
@@ -254,25 +212,22 @@ export class BrowserManager {
     const ownedPage = this.profilePages.get(profile);
     if (ownedPage && !ownedPage.isClosed()) await ownedPage.close().catch(() => null);
     this.profilePages.delete(profile);
-    const context = this.contexts.get(profile);
-    if (this.attachedOverCDP || context === this.sharedContext) {
-      this.contexts.delete(profile);
-      return;
-    }
-    if (context) {
-      try {
-        await context.close();
-      } catch {
-        // Already closed
-      }
-      this.contexts.delete(profile);
-    }
+    this.contexts.delete(profile);
   }
 
+  /** Close task tabs but keep the managed browser/profile ready for the next automation. */
   async closeAll(): Promise<void> {
-    for (const profile of Array.from(this.contexts.keys())) {
-      await this.closeContext(profile);
-    }
+    for (const profile of Array.from(this.contexts.keys())) await this.closeContext(profile);
+  }
+
+  /** Shutdown the process-owned browser on app exit; an explicitly attached user's browser is left open. */
+  async shutdown(): Promise<void> {
+    const context = this.sharedContext;
+    const isAttached = this.attachedOverCDP;
+    await this.closeAll();
+    this.sharedContext = undefined;
+    this.attachedOverCDP = false;
+    if (context && !isAttached) await context.close().catch(() => null);
   }
 
   isContextOpen(profile: BrowserProfile): boolean {

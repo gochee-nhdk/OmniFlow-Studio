@@ -111,14 +111,16 @@ Yêu cầu: **Node.js (>= 20)** và **pnpm (>= 9)**.
 
 ## ⚙️ Cấu Trúc Thư Mục Dữ Liệu Tự Động Hóa
 
-Mặc định, ứng dụng lưu trữ và phân loại các tệp báo cáo xuất ra theo cấu trúc chuẩn hóa:
+Mặc định, báo cáo được lưu trong thư mục Documents riêng của tài khoản Windows; có thể đổi nơi lưu trong phần Cài đặt:
 ```text
-D:\OmniFlow_Reports\
+Documents\OmniFlow_Reports\
 ├── Inventory/    # Báo cáo tồn kho đa điểm (Inventory Onhand Excel)
 ├── Sales/        # Báo cáo chi tiết doanh số bán lẻ (Sales Detail Excel)
 ├── SAP/          # Tệp dữ liệu & nhật ký đồng bộ từ SAP Business One
 └── PO/           # Đơn đặt hàng mua hàng tự động tạo (Purchase Orders)
 ```
+
+Automation mở cửa sổ Edge/Chrome riêng với profile bền vững thuộc OmniFlow, còn các tab POS và SAP được quản lý riêng. Ứng dụng không dùng cookie hay tab của trình duyệt cá nhân. Nút **Dừng Auto** chỉ đóng các tab tác vụ để có thể chạy việc khác; khi thoát OmniFlow, profile browser do tool mở sẽ được đóng. Gắn vào browser đang chạy chỉ dành cho kiểm thử nâng cao và không bật mặc định.
 
 ---
 

@@ -24,7 +24,7 @@ test('R10: an active CDP browser keeps its user page and receives separate POS a
   const context = browser.contexts()[0];
   const pagesBefore = context.pages().length;
   const userPage = await context.newPage();
-  const manager = new BrowserManager({ downloadDir: path.join(os.tmpdir(), `omniflow-r10-${Date.now()}`), headless: true, cdpPorts: [port] });
+  const manager = new BrowserManager({ downloadDir: path.join(os.tmpdir(), `omniflow-r10-${Date.now()}`), headless: true, allowCdpAttach: true, cdpPorts: [port] });
 
   try {
     const posPage = await manager.getPage('POS');
