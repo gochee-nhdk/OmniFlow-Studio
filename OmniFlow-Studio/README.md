@@ -39,49 +39,9 @@ Người dùng có thể tải về bản cài đặt độc lập hoặc gói p
 
 ---
 
-## 📸 Giới Thiệu Trực Quan Giao Diện (Visual Interface Showcase)
+## 🖥️ Giao Diện
 
-OmniFlow Studio được thiết kế theo ngôn ngữ hiện đại, sắc nét độ phân giải cao, tối ưu 0 độ trễ (zero delay), mang lại trải nghiệm làm việc mượt mà và trực quan cho người dùng doanh nghiệp.
-
-### 1. Tự Động Hóa POS RPFO (Phần Chọn Ngày & Sloc ID Đa Chọn)
-Giao diện phân hệ POS RPFO chuyên dụng với bộ chọn ngày linh hoạt (khoảng ngày hoặc ngày đơn), bộ lọc kho (Sloc ID) đa chọn trực quan, mẫu đặt tên file động và bảng ghi log thực thi thời gian thực.
-
-<div align="center">
-  <img src="docs/screenshots/pos-automation.png" alt="Giao diện Tự động hóa POS RPFO" width="900" />
-  <p><i>Hình 1: Bảng điều khiển tác vụ POS RPFO với bộ lọc mã kho Sloc và trình chọn ngày tự động</i></p>
-</div>
-
----
-
-### 2. Tự Động Hóa SAP Business One SLD (Cấu Hình Đăng Nhập & Xử Lý Trùng Phiên)
-Phân hệ SAP Business One cho phép cấu hình đăng nhập tự động, tự chọn Company DB, kiểm tra tính sẵn sàng của phiên làm việc và kích hoạt cơ chế độc quyền **Take Over Session** (tự giải phóng phiên làm việc bị kẹt mà không cần can thiệp thủ công).
-
-<div align="center">
-  <img src="docs/screenshots/dashboard-sap.png" alt="Giao diện Tự động hóa SAP Business One SLD" width="900" />
-  <p><i>Hình 2: Phân hệ SAP Business One SLD với tính năng kiểm tra đăng nhập và tự chiếm phiên làm việc</i></p>
-</div>
-
----
-
-### 3. Quản Lý Đa Doanh Nghiệp (Enterprise Profiles Multi-Tenant)
-Hỗ trợ quản lý không giới hạn hồ sơ chi nhánh, thương hiệu hoặc công ty con. Người dùng có thể dễ dàng thiết lập thông tin xác thực riêng biệt, định dạng quy tắc xuất file (`namingTemplate`) và tùy biến danh sách cửa hàng/kho hàng áp dụng cho từng đơn vị.
-
-<div align="center">
-  <img src="docs/screenshots/enterprise-profiles.png" alt="Quản Lý Đa Doanh Nghiệp" width="900" />
-  <p><i>Hình 3: Trình quản lý cấu hình Enterprise Profiles đa công ty với chứng chỉ bảo mật độc lập</i></p>
-</div>
-
----
-
-### 4. Giám Sát Hạ Tầng Mạng & Kết Nối Thực Tế (Real Live Socket/HTTP Probing)
-Hệ thống tích hợp bảng theo dõi sức khỏe kết nối mạng chủ động (Active Diagnostic Probing) với khả năng kiểm tra độ trễ (latency ping theo mili-giây) liên tục đến cổng máy chủ SAP SLD và POS RPFO qua Socket/HTTP probing thực tế, giúp phát hiện sớm sự cố nghẽn mạng trước khi chạy tác vụ.
-
-<div align="center">
-  <img src="docs/screenshots/network-infrastructure.png" alt="Giám sát Hạ tầng mạng & Kết nối thực tế" width="900" />
-  <p><i>Hình 4: Trình kiểm tra trạng thái mạng trực quan (Ping, Round-trip latency ms, Socket status)</i></p>
-</div>
-
----
+Ứng dụng khởi động với hồ sơ doanh nghiệp, máy chủ, tài khoản, cửa hàng và kho trống. Mỗi người dùng tự cấu hình thông tin trên máy của mình; repository không chứa ảnh chụp có dữ liệu cấu hình.
 
 ## 🌟 Điểm Nhấn Tính Năng Đột Phá (Feature Highlights)
 
@@ -178,7 +138,7 @@ OmniFlow-Studio/
 │   ├── shared-types/       # Kiểu dữ liệu TypeScript dùng chung toàn bộ workspace
 │   └── workflow-engine/    # Quản lý hàng đợi và điều phối luồng tác vụ song song
 ├── docs/
-│   └── screenshots/        # Ảnh chụp màn hình độ nét cao, chuẩn hóa dữ liệu bảo mật
+│   └── screenshots/        # Chỉ chứa tài nguyên thương hiệu dùng chung
 ├── release/                # Bộ cài đặt & Gói đóng gói độc lập (.exe, .zip)
 └── assets/                 # Logo thương hiệu và icon ứng dụng
 ```

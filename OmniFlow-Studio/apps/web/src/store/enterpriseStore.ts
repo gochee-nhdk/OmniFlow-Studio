@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import {
   EnterpriseProfile,
   ERPType,
-  DEFAULT_ENTERPRISE_PROFILES,
 } from '@fm/shared-types';
 import { invoke } from '../lib/ipc';
 
@@ -27,12 +26,12 @@ interface EnterpriseState {
     companySchema: string;
   }) => Promise<EnterpriseProfile>;
   deleteProfile: (id: string) => Promise<void>;
-  getActiveProfile: () => EnterpriseProfile;
+  getActiveProfile: () => EnterpriseProfile | undefined;
 }
 
 export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
-  profiles: DEFAULT_ENTERPRISE_PROFILES,
-  activeProfileId: DEFAULT_ENTERPRISE_PROFILES[0].id,
+  profiles: [],
+  activeProfileId: '',
   isLoading: false,
   error: null,
 
@@ -42,8 +41,10 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
     // 1. Try IPC if in Electron desktop environment
     try {
       const result = await invoke<{ profiles: EnterpriseProfile[]; activeId?: string }>('enterprise:list');
-      if (result && Array.isArray(result.profiles) && result.profiles.length > 0) {
-        const active = result.activeId || result.profiles.find((p) => p.isActive)?.id || result.profiles[0].id;
+      if (result && Array.isArray(result.profiles)) {
+        const active = result.profiles.length
+          ? result.activeId || result.profiles.find((p) => p.isActive)?.id || result.profiles[0].id
+          : '';
         set({ profiles: result.profiles, activeProfileId: active, isLoading: false });
         // Sync local storage
         try {
@@ -65,10 +66,12 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
 
       if (stored) {
         const parsed = JSON.parse(stored) as EnterpriseProfile[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const active = storedActiveId && parsed.some((p) => p.id === storedActiveId)
-            ? storedActiveId
-            : parsed.find((p) => p.isActive)?.id || parsed[0].id;
+        if (Array.isArray(parsed)) {
+          const active = parsed.length
+            ? storedActiveId && parsed.some((p) => p.id === storedActiveId)
+              ? storedActiveId
+              : parsed.find((p) => p.isActive)?.id || parsed[0].id
+            : '';
           set({ profiles: parsed, activeProfileId: active, isLoading: false });
           return;
         }
@@ -77,9 +80,9 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
       // Local storage parse error - fallback to defaults
     }
 
-    // 3. Seed defaults
-    const defaultProfiles = DEFAULT_ENTERPRISE_PROFILES;
-    const defaultActiveId = defaultProfiles[0].id;
+    // 3. A new install starts blank. Profiles are entered by the local user.
+    const defaultProfiles: EnterpriseProfile[] = [];
+    const defaultActiveId = '';
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultProfiles));
       localStorage.setItem(ACTIVE_ID_KEY, defaultActiveId);
@@ -153,7 +156,7 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
         storeMappings: input.storeMappings || [],
         slocMappings: input.slocMappings || [],
         namingTemplate: input.namingTemplate || '{{orgCode}}_{{reportType}}_{{fromDate}}_{{toDate}}.xlsx',
-        exportPath: input.exportPath || 'D:\\FM_AUTO_OPS',
+        exportPath: input.exportPath || '',
         isActive: profiles.length === 0,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -208,6 +211,6 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
   getActiveProfile: () => {
     const { profiles, activeProfileId } = get();
     const active = profiles.find((p) => p.id === activeProfileId);
-    return active || profiles[0] || DEFAULT_ENTERPRISE_PROFILES[0];
+    return active || profiles[0];
   },
 }));

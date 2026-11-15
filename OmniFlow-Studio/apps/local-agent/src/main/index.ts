@@ -4,14 +4,13 @@ import { mkdirSync, appendFileSync, existsSync } from 'fs';
 import { LogRedactor } from '@fm/security';
 import { registerAll } from './ipc/index';
 
-const LOG_DIR = 'D:\\FM_AUTO_OPS\\Logs';
-const LOG_FILE = join(LOG_DIR, 'electron-main.log');
-
 function log(msg: string): void {
   try {
-    mkdirSync(LOG_DIR, { recursive: true });
+    const logDir = join(app.getPath('userData'), 'logs');
+    const logFile = join(logDir, 'electron-main.log');
+    mkdirSync(logDir, { recursive: true });
     const redacted = LogRedactor.redact(msg);
-    appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${redacted}\n`);
+    appendFileSync(logFile, `[${new Date().toISOString()}] ${redacted}\n`);
   } catch {
     // Ignore logging errors
   }
@@ -46,7 +45,7 @@ function ensureDataDir(): void {
 function createWindow(): void {
   log('Creating main BrowserWindow...');
   const iconCandidate = join(__dirname, '../../../../assets/app-icon.ico');
-  const iconPath = existsSync(iconCandidate) ? iconCandidate : 'D:\\tool auto\\FM-AUTO-OPS\\assets\\app-icon.ico';
+  const iconPath = existsSync(iconCandidate) ? iconCandidate : '';
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -70,9 +69,8 @@ function createWindow(): void {
     join(__dirname, '../../../web/dist/index.html'),
     join(__dirname, '../../web/dist/index.html'),
     join(process.resourcesPath || '', 'web/dist/index.html'),
-    'D:\\tool auto\\FM-AUTO-OPS\\apps\\web\\dist\\index.html',
   ];
-  const localHtmlPath = candidates.find(p => existsSync(p)) || 'D:\\tool auto\\FM-AUTO-OPS\\apps\\web\\dist\\index.html';
+  const localHtmlPath = candidates.find(p => existsSync(p));
   log(`Loading HTML from: ${localHtmlPath}`);
 
   mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
@@ -85,10 +83,12 @@ function createWindow(): void {
 
   if (process.env['VITE_DEV'] === 'true') {
     mainWindow.loadURL('http://localhost:5173').catch(() => {
-      mainWindow?.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
+      if (localHtmlPath) mainWindow?.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
     });
-  } else {
+  } else if (localHtmlPath) {
     mainWindow.loadFile(localHtmlPath).catch((err) => log(`LoadFile error: ${err.message}`));
+  } else {
+    log('Application UI was not found in the packaged or development locations.');
   }
 
   // Ensure window is in front and active

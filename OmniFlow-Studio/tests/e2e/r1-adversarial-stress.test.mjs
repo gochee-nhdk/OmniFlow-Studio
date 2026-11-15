@@ -35,7 +35,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       selectCompany.appendChild(opt2);
     }, 50);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -70,7 +70,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       dbServerSelect.selectedIndex = 0;
     }, 60);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -98,7 +98,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       refreshClicked = true;
     });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -161,7 +161,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       const browser = new MockBrowserManager();
       browser.setPage('SAP', page);
 
-      const adapter = new SAPAdapter(browser);
+      const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
       const result = await adapter.login({
         username: 'manager',
         password: 'Password123!',
@@ -194,7 +194,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -223,7 +223,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -259,7 +259,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       }
     });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin_super',
       password: 'StrongPassword456#',
@@ -288,7 +288,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
       submittedPass = inputPass.value;
     });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     await adapter.login({
       username: 'operator_1',
       password: 'OpsPassword999!',
@@ -328,7 +328,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -354,7 +354,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -379,7 +379,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     browser.setPage('SAP', page);
 
     let progressCalls = 0;
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'wrong_user',
       password: 'wrong_password',
@@ -409,7 +409,7 @@ test.describe('R1 Adversarial Empirical Stress: SAP SLD Logon Automation', () =>
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',

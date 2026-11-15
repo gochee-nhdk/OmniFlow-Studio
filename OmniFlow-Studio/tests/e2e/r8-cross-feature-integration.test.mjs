@@ -41,7 +41,7 @@ test.describe('R8: Cross-Feature Integration (Tiers 3 & 4)', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'vault_admin',
       password: decryptedPass,
@@ -156,7 +156,7 @@ test.describe('R8: Cross-Feature Integration (Tiers 3 & 4)', () => {
     browser.setPage('POS', posPage);
 
     // SAP logs in
-    const sapAdapter = new SAPAdapter(browser);
+    const sapAdapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const sapRes = await sapAdapter.login({ username: 'admin', password: '123', company: 'FM_PRO' }, undefined, 2);
     assert.equal(sapRes.success, true);
 
@@ -260,7 +260,7 @@ test.describe('R8: Cross-Feature Integration (Tiers 3 & 4)', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({ username: 'admin', password: '123', company: 'FM_PRO', autoTakeOverSession: true }, undefined, 2);
 
     assert.equal(result.success, true);

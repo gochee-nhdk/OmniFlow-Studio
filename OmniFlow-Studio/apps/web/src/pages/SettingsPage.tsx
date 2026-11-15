@@ -17,16 +17,18 @@ interface EndpointProbeResult {
 }
 
 const DEFAULT_SERVICES = [
-  { id: 'sap-web', name: 'SAP Business One Web Client', url: 'https://sap-cluster.enterprise.example.com:8100/dispatcher/', port: 8100 },
-  { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: 'https://sap-sld.enterprise.example.com:40000/ControlCenter/', port: 40000 },
-  { id: 'pos-web', name: 'POS RPFO Enterprise Gateway', url: 'https://pos-gateway.enterprise.example.com/', port: 443 },
+  { id: 'sap-web', name: 'SAP Business One Web Client', url: '', port: 8100 },
+  { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: '', port: 40000 },
+  { id: 'pos-web', name: 'POS RPFO Web Application', url: '', port: 80 },
 ];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'storage' | 'network' | 'enterprise'>('storage');
   const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
   const { profiles, activeProfileId, setActiveProfile } = useEnterpriseStore();
-  const reportRoot = profiles.find((profile) => profile.id === activeProfileId)?.exportPath || 'Documents\\OmniFlow_Reports';
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
+  const [defaultReportRoot, setDefaultReportRoot] = useState('');
+  const reportRoot = activeProfile?.exportPath || defaultReportRoot;
 
   // Real-time network probe state
   const [services, setServices] = useState<EndpointProbeResult[]>(
@@ -35,9 +37,35 @@ export default function SettingsPage() {
   const [isProbingAll, setIsProbingAll] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
 
+  useEffect(() => {
+    invoke<{ documents?: string }>('app:get-paths').then((paths) => {
+      if (paths?.documents) setDefaultReportRoot(`${paths.documents}\\OmniFlow_Reports`);
+    }).catch(() => null);
+    invoke<any>('settings:get').then((settings: any) => {
+      const data = settings?.data || settings || {};
+      setServices([
+        { ...DEFAULT_SERVICES[0], url: activeProfile?.erpUrl || data.sapUrl || '' },
+        { ...DEFAULT_SERVICES[1], url: data.sapSldUrl || '' },
+        { ...DEFAULT_SERVICES[2], url: activeProfile?.posUrl || data.posBaseUrl || data.posUrl || '' },
+      ].map((service) => ({ ...service, isChecking: false })));
+    }).catch(() => {
+      setServices([
+        { ...DEFAULT_SERVICES[0], url: activeProfile?.erpUrl || '' },
+        DEFAULT_SERVICES[1],
+        { ...DEFAULT_SERVICES[2], url: activeProfile?.posUrl || '' },
+      ].map((service) => ({ ...service, isChecking: false })));
+    });
+  }, [activeProfile?.id]);
+
   const runNetworkProbe = useCallback(async () => {
     setIsProbingAll(true);
-    setServices((prev) => prev.map((s) => ({ ...s, isChecking: true })));
+    const configuredServices = services.filter((service) => service.url.trim());
+    if (configuredServices.length === 0) {
+      setServices((prev) => prev.map((service) => ({ ...service, reachable: false, error: 'Chưa cấu hình URL', isChecking: false })));
+      setIsProbingAll(false);
+      return;
+    }
+    setServices((prev) => prev.map((s) => ({ ...s, isChecking: Boolean(s.url.trim()), error: s.url.trim() ? undefined : 'Chưa cấu hình URL' })));
 
     try {
       const response = await invoke<{
@@ -51,7 +79,7 @@ export default function SettingsPage() {
           error?: string;
         }>;
         checkedAt: string;
-      }>('network:probe-endpoints', DEFAULT_SERVICES);
+      }>('network:probe-endpoints', configuredServices);
 
       if (response && response.results) {
         setServices((prev) =>
@@ -67,7 +95,7 @@ export default function SettingsPage() {
                 isChecking: false,
               };
             }
-            return { ...s, isChecking: false };
+            return { ...s, isChecking: false, error: s.url.trim() ? undefined : 'Chưa cấu hình URL' };
           })
         );
         const timeStr = new Date(response.checkedAt || Date.now()).toLocaleTimeString('vi-VN', {
@@ -90,7 +118,7 @@ export default function SettingsPage() {
     } finally {
       setIsProbingAll(false);
     }
-  }, []);
+  }, [services]);
 
   // Automatically trigger real network check when user opens the Network tab
   useEffect(() => {

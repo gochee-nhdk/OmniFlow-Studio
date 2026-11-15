@@ -36,7 +36,7 @@ test.describe('EMPIRICAL ADVERSARIAL VERIFICATION PROBE (R1 - R6)', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -61,7 +61,7 @@ test.describe('EMPIRICAL ADVERSARIAL VERIFICATION PROBE (R1 - R6)', () => {
     browser.setPage('SAP', page);
 
     let progressMessages = [];
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -84,7 +84,7 @@ test.describe('EMPIRICAL ADVERSARIAL VERIFICATION PROBE (R1 - R6)', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2026-11-01');
     await adapter.setDateFilter(page, 'to', '2026-11-10');
 
@@ -132,7 +132,7 @@ test.describe('EMPIRICAL ADVERSARIAL VERIFICATION PROBE (R1 - R6)', () => {
     let searchClicks = 0;
     btnSearch.addEventListener('click', () => { searchClicks++; });
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     const isPopulated = await adapter.isGridPopulated(page);
     assert.equal(isPopulated, true, 'Grid must be detected as populated');
 

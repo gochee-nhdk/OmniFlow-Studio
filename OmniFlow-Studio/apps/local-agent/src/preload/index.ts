@@ -17,6 +17,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>([
   'network:check',
   'network:probe-endpoints',
   'dialog:open-directory',
+  'app:get-paths',
   'browser:launch',
   'browser:close',
   'files:open-dir',

@@ -100,7 +100,7 @@ test.describe('R3: POS Excel Export Button & Blob Interception', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     const result = await adapter.downloadSalesTransactionDetail({
       fromDate: '2026-11-01',
       toDate: '2026-11-10',

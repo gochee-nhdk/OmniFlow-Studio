@@ -1,34 +1,19 @@
-﻿# Creates Single 1-Click Desktop Shortcut for FM AUTO OPS with custom icon and smart launcher
+# Creates a desktop shortcut for the per-user NSIS installation.
 
-$desktopPaths = @(
-  "D:\OneDrive\Máy tính",
-  [Environment]::GetFolderPath("Desktop"),
-  "C:\Users\$env:USERNAME\Desktop"
-) | Select-Object -Unique
-
-$wshShell = New-Object -ComObject WScript.Shell
-$iconPath = "d:\tool auto\FM-AUTO-OPS\assets\app-icon.ico,0"
-$vbsPath = "d:\tool auto\FM-AUTO-OPS\FM_AUTO_OPS.vbs"
-
-foreach ($d in $desktopPaths) {
-  if (Test-Path $d) {
-    # Remove older redundant shortcuts
-    @("FM AUTO OPS (Desktop App).lnk", "FM AUTO OPS (Web Dashboard).lnk") | ForEach-Object {
-      $old = Join-Path $d $_
-      if (Test-Path $old) { Remove-Item $old -Force }
-    }
-
-    # Create the single primary shortcut
-    $lnk = Join-Path $d "FM AUTO OPS.lnk"
-    $sc = $wshShell.CreateShortcut($lnk)
-    $sc.TargetPath = "wscript.exe"
-    $sc.Arguments = "`"$vbsPath`""
-    $sc.WorkingDirectory = "d:\tool auto\FM-AUTO-OPS"
-    $sc.IconLocation = $iconPath
-    $sc.Description = "FM AUTO OPS — Enterprise Procurement & RPA Tool"
-    $sc.WindowStyle = 1
-    $sc.Save()
-
-    Write-Host "Created single 1-click shortcut: $lnk"
-  }
+$appPath = Join-Path $env:LOCALAPPDATA "Programs\OmniFlow Studio\OmniFlow Studio.exe"
+if (-not (Test-Path -LiteralPath $appPath)) {
+  throw "OmniFlow Studio is not installed for this Windows user: $appPath"
 }
+
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$shortcutPath = Join-Path $desktopPath "OmniFlow Studio.lnk"
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $appPath
+$shortcut.WorkingDirectory = Split-Path -Parent $appPath
+$shortcut.Description = "OmniFlow Studio"
+$iconPath = Join-Path (Split-Path -Parent $appPath) "resources\app\assets\app-icon.ico"
+if (Test-Path -LiteralPath $iconPath) { $shortcut.IconLocation = "$iconPath,0" }
+$shortcut.Save()
+
+Write-Host "Created shortcut: $shortcutPath"

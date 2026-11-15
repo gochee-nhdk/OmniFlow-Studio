@@ -240,9 +240,10 @@ export class POSAdapter {
   private browserManager: BrowserManager;
   private baseUrl: string;
 
-  constructor(browserManager: BrowserManager, baseUrl = process.env.POS_URL || 'http://pos.enterprise.example.com/') {
+  constructor(browserManager: BrowserManager, baseUrl = process.env.POS_URL || '') {
     this.browserManager = browserManager;
-    this.baseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    this.baseUrl = baseUrl ? (baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`) : '';
+    if (!this.baseUrl) throw new Error('POS URL is not configured. Set it in the POS connection settings before automation.');
   }
 
   /**

@@ -10,38 +10,30 @@ import { resolveNamingTemplate } from '../lib/namingTemplate';
 import { invoke } from '../lib/ipc';
 import { format, subDays, startOfMonth } from 'date-fns';
 
-// Danh sách Sloc ID tổng hợp chuẩn (bao gồm cả mã kho cửa hàng & kho tổng trung tâm)
-const DEFAULT_UNIFIED_SLOCS = [
-  { id: 'DC01', name: 'Kho Trung Tâm DC01 - Distribution Hub' },
-  { id: 'DC02', name: 'Kho Phân Phối DC02 - Logistics Center' },
-  { id: 'ST01', name: 'Kho Cửa Hàng Flagship Store 01' },
-  { id: 'ST02', name: 'Kho Cửa Hàng Branch Store 02' },
-  { id: 'ST03', name: 'Kho Cửa Hàng Mall Store 03' },
-  { id: 'ST04', name: 'Kho Cửa Hàng Gateway Store 04' },
-  { id: 'ST05', name: 'Kho Cửa Hàng Express Store 05' },
-];
-
 export default function POSPage() {
   const { networkStatus, isCheckingNetwork, checkNetwork, activeProgress, isLoading, startWorkflow } = useAgentStore();
-  const { getActiveProfile } = useEnterpriseStore();
-  const activeProfile = getActiveProfile();
+  const { profiles, activeProfileId } = useEnterpriseStore();
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0];
 
   // Danh mục kho & cửa hàng hợp nhất (Sloc ID: gộp cả storeMappings và slocMappings từ profile)
   const slocList = React.useMemo(() => {
     const stores = activeProfile?.storeMappings || [];
     const slocs = activeProfile?.slocMappings || [];
     const combined = [...slocs, ...stores];
-    if (combined.length > 0) {
-      // Remove potential duplicates by id
-      const seen = new Set<string>();
-      return combined.filter((item) => {
-        if (!item?.id || seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      });
-    }
-    return DEFAULT_UNIFIED_SLOCS;
+    // Only offer locations explicitly configured for the active enterprise.
+    const seen = new Set<string>();
+    return combined.reduce<Array<{ id: string; name: string }>>((items, item) => {
+      const id = item?.id?.trim();
+      if (!id || seen.has(id)) return items;
+      seen.add(id);
+      items.push({ id, name: item.name || id });
+      return items;
+    }, []);
   }, [activeProfile?.storeMappings, activeProfile?.slocMappings]);
+  const configuredSlocIds = useMemo(() => slocList.map((item) => item.id), [slocList]);
+  const configuredSlocSignature = configuredSlocIds.join('|');
+  const selectionProfileId = activeProfile?.id || 'unconfigured';
+  const selectionScope = `${selectionProfileId}:${configuredSlocSignature}`;
 
   // POS URL & Credentials state
   const [posUrl, setPosUrl] = useState(() => {
@@ -55,9 +47,9 @@ export default function POSPage() {
   });
   const [posUser, setPosUser] = useState(() => {
     try {
-      return localStorage.getItem('pos_user') || 'STORE_ADMIN';
+      return localStorage.getItem('pos_user') || '';
     } catch {
-      return 'STORE_ADMIN';
+      return '';
     }
   });
   const [posPassword, setPosPassword] = useState('');
@@ -66,7 +58,7 @@ export default function POSPage() {
   const [showPosPassword, setShowPosPassword] = useState(false);
   const [testingPosUrl, setTestingPosUrl] = useState(false);
   const [posUrlTestResult, setPosUrlTestResult] = useState<{ ok?: boolean; msg?: string } | null>(null);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const posUrlEditedRef = useRef(false);
 
   // Sales options
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -74,15 +66,16 @@ export default function POSPage() {
   const [salesToDate, setSalesToDate] = useState(() => localStorage.getItem('pos_sales_to_date') || todayStr);
 
   // Module 1: Sales Store Selection (Multi-select)
-  const [selectedSalesStores, setSelectedSalesStores] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pos_sales_stores') || 'null') || slocList.map(s => s.id); } catch { return slocList.map(s => s.id); } });
+  const [selectedSalesStores, setSelectedSalesStores] = useState<string[]>([]);
+  const [salesStoreFilterEnabled, setSalesStoreFilterEnabled] = useState(false);
   const [isSalesStoreDropdownOpen, setIsSalesStoreDropdownOpen] = useState(false);
   const salesStoreDropdownRef = useRef<HTMLDivElement>(null);
 
   const [salesDir, setSalesDir] = useState(() => {
     try {
-      return localStorage.getItem('pos_sales_dir') || `${activeProfile?.exportPath || 'Documents\\OmniFlow_Reports'}\\Sales`;
+      return localStorage.getItem('pos_sales_dir') || (activeProfile?.exportPath ? `${activeProfile.exportPath}\\Sales` : '');
     } catch {
-      return `${activeProfile?.exportPath || 'Documents\\OmniFlow_Reports'}\\Sales`;
+      return activeProfile?.exportPath ? `${activeProfile.exportPath}\\Sales` : '';
     }
   });
   const [salesFileName, setSalesFileName] = useState(() => {
@@ -94,30 +87,95 @@ export default function POSPage() {
   });
 
   // Module 2: Inventory Unified Sloc Selection (Multi-select)
-  const [selectedInvSlocs, setSelectedInvSlocs] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('pos_inv_slocs') || 'null') || slocList.map(s => s.id); } catch { return slocList.map(s => s.id); } });
+  const [selectedInvSlocs, setSelectedInvSlocs] = useState<string[]>([]);
   const [isInvSlocDropdownOpen, setIsInvSlocDropdownOpen] = useState(false);
   const invSlocDropdownRef = useRef<HTMLDivElement>(null);
 
   const [invItem, setInvItem] = useState(() => localStorage.getItem('pos_inv_item') || '');
   const preferencesLoadedRef = useRef(false);
+  const hydratedSelectionScopeRef = useRef('');
+  const skipSelectionPersistRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      setSalesStoreFilterEnabled(localStorage.getItem(`pos_sales_filter_enabled_${selectionProfileId}`) === 'true');
+    } catch {
+      setSalesStoreFilterEnabled(false);
+    }
+    setIsSalesStoreDropdownOpen(false);
+  }, [selectionProfileId]);
+
+  useEffect(() => {
+    invoke<any>('app:get-paths').then((paths) => {
+      const root = activeProfile?.exportPath || (paths?.documents ? `${paths.documents}\\OmniFlow_Reports` : '');
+      if (!root) return;
+      setSalesDir((current) => current || `${root}\\Sales`);
+      setInvDir((current) => current || `${root}\\Inventory`);
+    }).catch(() => null);
+  }, [activeProfile?.id]);
+
+  useEffect(() => {
+    const validIds = new Set(configuredSlocIds);
+    const readSelection = (kind: 'sales' | 'inventory') => {
+      if (!activeProfile) return [];
+      const key = `pos_${kind === 'sales' ? 'sales' : 'inventory'}_slocs_${activeProfile.id}`;
+      let saved: { selectedIds?: string[]; configuredIds?: string[] } | null = null;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) saved = JSON.parse(raw);
+      } catch {}
+
+      if (!saved || !Array.isArray(saved.selectedIds)) return configuredSlocIds;
+      const previousIds = Array.isArray(saved.configuredIds) ? saved.configuredIds : [];
+      if (previousIds.length === 0 && configuredSlocIds.length > 0 && saved.selectedIds.length === 0) return configuredSlocIds;
+      const hadAllLocationsSelected = previousIds.length > 0 && previousIds.every((id) => saved!.selectedIds!.includes(id));
+      return hadAllLocationsSelected
+        ? configuredSlocIds
+        : saved.selectedIds.filter((id) => validIds.has(id));
+    };
+
+    skipSelectionPersistRef.current = true;
+    hydratedSelectionScopeRef.current = selectionScope;
+    setIsSalesStoreDropdownOpen(false);
+    setIsInvSlocDropdownOpen(false);
+    setSelectedSalesStores(readSelection('sales'));
+    setSelectedInvSlocs(readSelection('inventory'));
+  }, [selectionScope, configuredSlocSignature]);
+
+  useEffect(() => {
+    if (hydratedSelectionScopeRef.current !== selectionScope) return;
+    if (skipSelectionPersistRef.current) {
+      skipSelectionPersistRef.current = false;
+      return;
+    }
+
+    const validIds = new Set(configuredSlocIds);
+    const salesIds = selectedSalesStores.filter((id) => validIds.has(id));
+    const inventoryIds = selectedInvSlocs.filter((id) => validIds.has(id));
+    const payload = (selectedIds: string[]) => JSON.stringify({ selectedIds, configuredIds: configuredSlocIds });
+    try {
+      if (activeProfile) {
+        localStorage.setItem(`pos_sales_slocs_${activeProfile.id}`, payload(salesIds));
+        localStorage.setItem(`pos_inventory_slocs_${activeProfile.id}`, payload(inventoryIds));
+      }
+    } catch {}
+  }, [selectedSalesStores, selectedInvSlocs, selectionScope, configuredSlocSignature]);
 
   useEffect(() => {
     if (!preferencesLoadedRef.current) return;
-    const preferences = { posSalesFromDate: salesFromDate, posSalesToDate: salesToDate, posSelectedSalesStores: selectedSalesStores, posSelectedInvSlocs: selectedInvSlocs, posInvItem: invItem };
+    const preferences = { posSalesFromDate: salesFromDate, posSalesToDate: salesToDate, posInvItem: invItem };
     try {
       localStorage.setItem('pos_sales_from_date', salesFromDate);
       localStorage.setItem('pos_sales_to_date', salesToDate);
-      localStorage.setItem('pos_sales_stores', JSON.stringify(selectedSalesStores));
-      localStorage.setItem('pos_inv_slocs', JSON.stringify(selectedInvSlocs));
       localStorage.setItem('pos_inv_item', invItem);
     } catch {}
     invoke('settings:set', preferences).catch(() => null);
-  }, [salesFromDate, salesToDate, selectedSalesStores, selectedInvSlocs, invItem]);
+  }, [salesFromDate, salesToDate, invItem]);
   const [invDir, setInvDir] = useState(() => {
     try {
-      return localStorage.getItem('pos_inv_dir') || `${activeProfile?.exportPath || 'Documents\\OmniFlow_Reports'}\\Inventory`;
+      return localStorage.getItem('pos_inv_dir') || (activeProfile?.exportPath ? `${activeProfile.exportPath}\\Inventory` : '');
     } catch {
-      return `${activeProfile?.exportPath || 'Documents\\OmniFlow_Reports'}\\Inventory`;
+      return activeProfile?.exportPath ? `${activeProfile.exportPath}\\Inventory` : '';
     }
   });
   const [invFileName, setInvFileName] = useState(() => {
@@ -127,16 +185,6 @@ export default function POSPage() {
       return 'Inventory_{SLOC}_{TIMESTAMP}.xlsx';
     }
   });
-
-  // Keep selection synchronized with slocList if empty initially or profile changes
-  const prevSlocLengthRef = useRef(slocList.length);
-  useEffect(() => {
-    if (prevSlocLengthRef.current !== slocList.length) {
-      prevSlocLengthRef.current = slocList.length;
-      setSelectedSalesStores(slocList.map(s => s.id));
-      setSelectedInvSlocs(slocList.map(s => s.id));
-    }
-  }, [slocList]);
 
   // Live preview for sales and inventory templates
   const isAllSalesStoresSelected = useMemo(() => {
@@ -196,43 +244,40 @@ export default function POSPage() {
   useEffect(() => {
     checkNetwork();
 
-    // Auto-load saved credentials (Username and Password state) without exposing raw secret to localStorage
-    invoke<any>('credentials:get', { accountName: 'POS_MAIN' }).then((res) => {
+    // Load credential metadata and settings together so a late credential response cannot
+    // overwrite a newer URL setting (or a URL the user edits while hydration is in flight).
+    Promise.all([
+      invoke<any>('credentials:get', { accountName: 'POS_MAIN' }).catch(() => null),
+      invoke<any>('settings:get').catch(() => null),
+    ]).then(([res, settingsRes]) => {
+      const data = settingsRes?.data || settingsRes;
       if (res) {
         if (res.username) {
           setPosUser(res.username);
           try { localStorage.setItem('pos_user', res.username); } catch {}
         }
-        if (res.url && res.url.trim()) {
-          // Chỉ lấy res.url nếu đó không phải URL của SAP bị lưu nhầm trước đây
-          const cleanUrl = res.url.trim();
-          if (!cleanUrl.includes(':8100') && !cleanUrl.includes('dispatcher')) {
-            setPosUrl(cleanUrl);
-            try { localStorage.setItem('pos_base_url', cleanUrl); } catch {}
-          }
-        }
         if (res.hasPassword) {
           setHasSavedPassword(true);
         }
       }
-    }).catch(() => null);
-
-    invoke<any>('settings:get').then((res: any) => {
-      const data = res?.data || res;
-      if (data?.posSalesFromDate) setSalesFromDate(data.posSalesFromDate);
-      if (data?.posSalesToDate) setSalesToDate(data.posSalesToDate);
-      if (Array.isArray(data?.posSelectedSalesStores)) setSelectedSalesStores(data.posSelectedSalesStores);
-      if (Array.isArray(data?.posSelectedInvSlocs)) setSelectedInvSlocs(data.posSelectedInvSlocs);
-      if (typeof data?.posInvItem === 'string') setInvItem(data.posInvItem);
-      preferencesLoadedRef.current = true;
-      if (data?.posBaseUrl || data?.posUrl) {
-        const urlVal = (data.posBaseUrl || data.posUrl).trim();
-        if (!urlVal.includes(':8100') && !urlVal.includes('dispatcher')) {
-          setPosUrl(urlVal);
-          try { localStorage.setItem('pos_base_url', urlVal); } catch {}
+      if (!posUrlEditedRef.current) {
+        const configuredUrl = typeof data?.posBaseUrl === 'string' && data.posBaseUrl.trim()
+          ? data.posBaseUrl.trim()
+          : typeof data?.posUrl === 'string' && data.posUrl.trim()
+            ? data.posUrl.trim()
+            : '';
+        const credentialUrl = typeof res?.url === 'string' ? res.url.trim() : '';
+        const storedUrl = (() => { try { return localStorage.getItem('pos_base_url')?.trim() || ''; } catch { return ''; } })();
+        const url = storedUrl || configuredUrl || (credentialUrl && !credentialUrl.includes(':8100') && !credentialUrl.includes('dispatcher') ? credentialUrl : '');
+        if (url) {
+          setPosUrl(url);
+          try { localStorage.setItem('pos_base_url', url); } catch {}
         }
       }
-
+      if (data?.posSalesFromDate) setSalesFromDate(data.posSalesFromDate);
+      if (data?.posSalesToDate) setSalesToDate(data.posSalesToDate);
+      if (typeof data?.posInvItem === 'string') setInvItem(data.posInvItem);
+      preferencesLoadedRef.current = true;
       if (data?.posSalesDir) {
         setSalesDir(data.posSalesDir);
         try { localStorage.setItem('pos_sales_dir', data.posSalesDir); } catch {}
@@ -272,6 +317,7 @@ export default function POSPage() {
   }, []);
 
   const handlePosUrlChange = (val: string) => {
+    posUrlEditedRef.current = true;
     setPosUrl(val);
     setPosUrlTestResult(null);
     try { localStorage.setItem('pos_base_url', val); } catch {}
@@ -296,33 +342,14 @@ export default function POSPage() {
     }
   };
 
-  const persistCredentials = (newUser: string, newPass: string, newUrl: string = posUrl) => {
-    try {
-      if (newUser) localStorage.setItem('pos_user', newUser);
-    } catch {}
-
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      if (newUser && newPass) {
-        invoke('credentials:save', {
-          accountName: 'POS_MAIN',
-          username: newUser,
-          password: newPass,
-          application: 'POS',
-          url: newUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/',
-        }).then(() => setHasSavedPassword(true)).catch(() => null);
-      }
-    }, 600);
-  };
-
   const handleUserChange = (val: string) => {
     setPosUser(val);
-    persistCredentials(val, posPassword, posUrl);
+    try { localStorage.setItem('pos_user', val); } catch {}
   };
 
   const handlePasswordChange = (val: string) => {
     setPosPassword(val);
-    persistCredentials(posUser, val, posUrl);
+    setHasSavedPassword(false);
   };
 
   const handleSaveCredentials = async () => {
@@ -337,8 +364,10 @@ export default function POSPage() {
           username: posUser,
           password: posPassword,
           application: 'POS',
-          url: posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/',
+          url: posUrl || activeProfile?.posUrl || '',
         });
+        const verification = await invoke<any>('credentials:get', { accountName: 'POS_MAIN' });
+        if (!verification?.hasPassword) throw new Error('Ứng dụng chưa xác nhận được mật khẩu đã lưu. Vui lòng thử lại.');
         setHasSavedPassword(true);
       }
       await invoke('settings:set', { posBaseUrl: posUrl });
@@ -424,18 +453,29 @@ export default function POSPage() {
     return `${selected.length} mã đã chọn (${selected.join(', ')})`;
   };
 
-  const handleRunSales = async () => {
-    if (posUser && posPassword) {
-      invoke('credentials:save', {
+  const persistPosCredentialsBeforeRun = async () => {
+    if (!posUser || !posPassword) return true;
+    try {
+      await invoke('credentials:save', {
         accountName: 'POS_MAIN',
         username: posUser,
         password: posPassword,
         application: 'POS',
-        url: posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/',
-      }).catch(() => null);
+        url: posUrl || activeProfile?.posUrl || '',
+      });
+      setHasSavedPassword(true);
+      return true;
+    } catch (error: any) {
+      alert(`Không thể lưu mật khẩu POS nên chưa chạy automation: ${error?.message || error}`);
+      return false;
     }
+  };
 
-    const storeFilterArg = isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
+  const handleRunSales = async () => {
+    if (salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0)) return;
+    if (!(await persistPosCredentialsBeforeRun())) return;
+
+    const storeFilterArg = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
 
     await startWorkflow('DOWNLOAD_SALES', {
       posBaseUrl: posUrl,
@@ -452,15 +492,8 @@ export default function POSPage() {
   };
 
   const handleRunInventory = async () => {
-    if (posUser && posPassword) {
-      invoke('credentials:save', {
-        accountName: 'POS_MAIN',
-        username: posUser,
-        password: posPassword,
-        application: 'POS',
-        url: posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/',
-      }).then(() => setHasSavedPassword(true)).catch(() => null);
-    }
+    if (slocList.length === 0 || selectedInvSlocs.length === 0) return;
+    if (!(await persistPosCredentialsBeforeRun())) return;
 
     const slocFilterArg = isAllInvSlocsSelected ? '' : selectedInvSlocs.join(',');
 
@@ -479,17 +512,10 @@ export default function POSPage() {
   };
 
   const handleRunBoth = async () => {
-    if (posUser && posPassword) {
-      invoke('credentials:save', {
-        accountName: 'POS_MAIN',
-        username: posUser,
-        password: posPassword,
-        application: 'POS',
-        url: posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/',
-      }).then(() => setHasSavedPassword(true)).catch(() => null);
-    }
+    if ((salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0)) || slocList.length === 0 || selectedInvSlocs.length === 0) return;
+    if (!(await persistPosCredentialsBeforeRun())) return;
 
-    const salesStoreFilter = isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
+    const salesStoreFilter = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
     const invSlocFilter = isAllInvSlocsSelected ? '' : selectedInvSlocs.join(',');
 
     await startWorkflow('POS_AUTOMATION', {
@@ -537,7 +563,7 @@ export default function POSPage() {
             <h1 className="text-xl font-bold text-slate-900">POS RPFO Automation System</h1>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Quản lý tải dữ liệu Doanh số & Tồn kho tự động từ POS RPFO ({posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com/'})
+            Quản lý tải dữ liệu Doanh số & Tồn kho tự động từ POS RPFO ({posUrl || activeProfile?.posUrl || ''})
           </p>
         </div>
 
@@ -561,7 +587,7 @@ export default function POSPage() {
               : isPosOnline
               ? `POS Server Kết nối (${(() => {
                   try {
-                    return new URL(posUrl || activeProfile?.erpUrl || 'http://pos.enterprise.example.com').host;
+                    return new URL(posUrl || activeProfile?.posUrl || '').host;
                   } catch {
                     return posUrl;
                   }
@@ -613,7 +639,7 @@ export default function POSPage() {
               type="text"
               value={posUrl}
               onChange={(e) => handlePosUrlChange(e.target.value)}
-              placeholder="VD: http://172.16.1.200/ hoặc http://pos.yourdomain.local/"
+              placeholder="Nhập URL portal POS do doanh nghiệp cung cấp"
               className="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono text-slate-800"
             />
             <button
@@ -650,7 +676,7 @@ export default function POSPage() {
               type="text"
               value={posUser}
               onChange={(e) => handleUserChange(e.target.value)}
-              placeholder="VD: STORE_ADMIN"
+              placeholder="Nhập user POS"
               className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
             />
           </div>
@@ -664,7 +690,7 @@ export default function POSPage() {
                 type={showPosPassword ? 'text' : 'password'}
                 value={posPassword}
                 onChange={(e) => handlePasswordChange(e.target.value)}
-                placeholder={hasSavedPassword ? '•••••••• (Đã lưu an toàn)' : '••••••••'}
+                placeholder={hasSavedPassword ? 'Đã lưu an toàn — nhập mật khẩu mới để thay đổi' : 'Nhập mật khẩu POS'}
                 className="w-full pl-3 pr-9 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
               />
               <button
@@ -756,22 +782,43 @@ export default function POSPage() {
               </div>
             </div>
 
-            {/* Module 1: Sloc ID / Cửa hàng Dropdown (Đồng nhất gộp chung) */}
-            <div className="relative" ref={salesStoreDropdownRef}>
-              <label className="text-xs font-medium text-slate-600 block mb-1">
-                Sloc ID / Cửa hàng
+            <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <span>
+                  <span className="block text-xs font-semibold text-slate-700">Lọc theo cửa hàng</span>
+                  <span className="block mt-0.5 text-[11px] text-slate-500">Mặc định tắt, doanh số lấy theo khoảng thời gian đã chọn.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={salesStoreFilterEnabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setSalesStoreFilterEnabled(enabled);
+                    setIsSalesStoreDropdownOpen(false);
+                    try { localStorage.setItem(`pos_sales_filter_enabled_${selectionProfileId}`, String(enabled)); } catch {}
+                  }}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  aria-label="Bật hoặc tắt bộ lọc cửa hàng cho doanh số"
+                />
               </label>
+            </div>
+
+            {/* Store selection is optional for sales and hidden unless explicitly enabled. */}
+            {salesStoreFilterEnabled && <div className="relative" ref={salesStoreDropdownRef}>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Sloc ID / Cửa hàng</label>
 
               <button
                 type="button"
                 onClick={() => setIsSalesStoreDropdownOpen(!isSalesStoreDropdownOpen)}
-                className="w-full px-3 py-1.5 text-sm font-mono text-left bg-white border border-slate-300 rounded flex items-center justify-between hover:border-slate-400 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                disabled={slocList.length === 0}
+                className="w-full px-3 py-1.5 text-sm font-mono text-left bg-white border border-slate-300 rounded flex items-center justify-between hover:border-slate-400 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
               >
-                <span className="truncate text-slate-800">
-                  {getSummaryText(selectedSalesStores, slocList)}
+                <span className={`truncate ${slocList.length ? 'text-slate-800' : 'text-slate-400'}`}>
+                  {slocList.length ? getSummaryText(selectedSalesStores, slocList) : 'Chưa thiết lập cửa hàng / kho'}
                 </span>
                 <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
               </button>
+              {slocList.length === 0 && <p className="mt-1 text-[11px] text-amber-700">Thêm cửa hàng hoặc kho trong Thiết lập doanh nghiệp để bật lọc này.</p>}
 
               {isSalesStoreDropdownOpen && (
                 <div className="absolute z-20 mt-1 w-full bg-white border border-slate-300 rounded-md shadow-lg max-h-56 overflow-y-auto p-1.5 space-y-1">
@@ -815,7 +862,7 @@ export default function POSPage() {
                   })}
                 </div>
               )}
-            </div>
+            </div>}
 
             {/* Output Directory & File template */}
             <div className="space-y-3 pt-3 border-t border-slate-100">
@@ -865,7 +912,7 @@ export default function POSPage() {
 
           <button
             type="button"
-            disabled={isLoading}
+            disabled={isLoading || (salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0))}
             onClick={handleRunSales}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded shadow transition-colors cursor-pointer mt-4"
           >
@@ -896,13 +943,15 @@ export default function POSPage() {
               <button
                 type="button"
                 onClick={() => setIsInvSlocDropdownOpen(!isInvSlocDropdownOpen)}
-                className="w-full px-3 py-1.5 text-sm font-mono text-left bg-white border border-slate-300 rounded flex items-center justify-between hover:border-slate-400 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                disabled={slocList.length === 0}
+                className="w-full px-3 py-1.5 text-sm font-mono text-left bg-white border border-slate-300 rounded flex items-center justify-between hover:border-slate-400 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
               >
-                <span className="truncate text-slate-800">
-                  {getSummaryText(selectedInvSlocs, slocList)}
+                <span className={`truncate ${slocList.length ? 'text-slate-800' : 'text-slate-400'}`}>
+                  {slocList.length ? getSummaryText(selectedInvSlocs, slocList) : 'Chưa thiết lập cửa hàng / kho'}
                 </span>
                 <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
               </button>
+              {slocList.length === 0 && <p className="mt-1 text-[11px] text-amber-700">Thêm cửa hàng hoặc kho trong Thiết lập doanh nghiệp để chọn dữ liệu.</p>}
 
               {isInvSlocDropdownOpen && (
                 <div className="absolute z-20 mt-1 w-full bg-white border border-slate-300 rounded-md shadow-lg max-h-56 overflow-y-auto p-1.5 space-y-1">
@@ -1010,7 +1059,7 @@ export default function POSPage() {
 
           <button
             type="button"
-            disabled={isLoading}
+            disabled={isLoading || slocList.length === 0 || selectedInvSlocs.length === 0}
             onClick={handleRunInventory}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded shadow transition-colors cursor-pointer mt-4"
           >
@@ -1031,7 +1080,7 @@ export default function POSPage() {
 
         <button
           onClick={handleRunBoth}
-          disabled={isLoading}
+          disabled={isLoading || slocList.length === 0 || selectedInvSlocs.length === 0 || (salesStoreFilterEnabled && selectedSalesStores.length === 0)}
           className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded shadow transition-colors cursor-pointer whitespace-nowrap"
         >
           <Play className="w-4 h-4 fill-current" />

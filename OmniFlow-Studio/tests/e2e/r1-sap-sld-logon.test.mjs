@@ -25,7 +25,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     let changeFired = false;
     selectCompany.addEventListener('change', () => { changeFired = true; });
 
@@ -54,7 +54,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -93,7 +93,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const refreshBtn = doc.getElementById('refresh_company');
     if (refreshBtn) refreshBtn.addEventListener('click', populate);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -114,7 +114,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     await adapter.login({
       username: 'procurement_specialist',
       password: 'SuperSecretAuthPassword2026!',
@@ -137,7 +137,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     let submitClicked = false;
     btnLogon.addEventListener('click', () => { submitClicked = true; });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -158,7 +158,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'Password123!',
@@ -193,7 +193,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
       }
     });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -216,7 +216,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     // Passing lowercase text that should still match schema or text
     const result = await adapter.login({
       username: 'admin',
@@ -238,7 +238,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     // Run login check
     await adapter.login({
       username: 'admin',
@@ -261,7 +261,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -286,7 +286,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -306,7 +306,7 @@ test.describe('R1: SAP SLD Logon Automation', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',

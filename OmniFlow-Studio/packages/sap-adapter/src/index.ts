@@ -25,8 +25,8 @@ export type ConcurrentLoginPrompt = (message: string) => Promise<boolean>;
 export interface SAPLoginOptions {
   username: string;
   password: string;
-  company?: string; // Schema or Company Name, e.g. "DEMO_ORG" or "Standard Enterprise Corp (DEMO_ORG)"
-  server?: string;  // e.g. "SBO@sap-cluster.enterprise.example.com:30013"
+  company?: string; // Company schema or display name configured by the user.
+  server?: string;  // Database server configured by the user.
   autoTakeOverSession?: boolean;
   targetModule?: 'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS';
 }
@@ -113,12 +113,13 @@ export class SAPAdapter {
 
   constructor(
     browserManager: BrowserManager,
-    sapUrl = process.env.SAP_URL || 'https://erp.enterprise.example.com:8100/dispatcher/',
+    sapUrl = process.env.SAP_URL || '',
     onConcurrentLogin: ConcurrentLoginPrompt = async () => false
   ) {
     this.browserManager = browserManager;
     this.sapUrl = sapUrl;
     this.onConcurrentLogin = onConcurrentLogin;
+    if (!this.sapUrl) throw new Error('SAP URL is not configured. Set it in the SAP connection settings before automation.');
   }
 
   /**
@@ -128,7 +129,7 @@ export class SAPAdapter {
     const page = await this.browserManager.getPage('SAP');
 
     try {
-      let parsedHost = 'erp.enterprise.example.com';
+      let parsedHost = '';
       try { parsedHost = new URL(this.sapUrl).host; } catch {}
       if (!page.url().includes(parsedHost) && !page.url().includes('dispatcher') && !page.url().includes('ControlCenter')) {
         await page.goto(this.sapUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -185,7 +186,7 @@ export class SAPAdapter {
         }
 
         const currentUrl = page.url();
-        let parsedHost = 'erp.enterprise.example.com';
+        let parsedHost = '';
         try { parsedHost = new URL(this.sapUrl).host; } catch {}
         if (!currentUrl.includes(parsedHost) && !currentUrl.includes('dispatcher') && !currentUrl.includes('ControlCenter')) {
           onProgress?.(`Mở kết nối SAP: ${this.sapUrl}...`);

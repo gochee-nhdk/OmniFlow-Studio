@@ -1,6 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Server, Clock, AlertTriangle, Settings, Building2, ChevronRight, CheckCircle2, AlertCircle, X
+  LayoutDashboard, ShoppingCart, Server, Clock, AlertTriangle, Settings, Building2, ChevronRight, CheckCircle2, AlertCircle, X, Square, LoaderCircle
 } from 'lucide-react';
 import { useAgentStore } from '../store/agentStore';
 import { useEnterpriseStore } from '../store/enterpriseStore';
@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import EnterpriseProfilesModal from './EnterpriseProfilesModal';
 
 export default function Layout() {
-  const { refreshStatus, checkNetwork, errors, networkFeedback, dismissNetworkFeedback } = useAgentStore();
+  const { refreshStatus, checkNetwork, errors, networkFeedback, dismissNetworkFeedback, isLoading, isStopping, activeProgress, stopWorkflow } = useAgentStore();
   const { loadProfiles, getActiveProfile } = useEnterpriseStore();
   const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
 
@@ -60,6 +60,24 @@ export default function Layout() {
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
+        </div>
+      )}
+      {isLoading && (
+        <div role="status" aria-live="polite" className="fixed bottom-5 left-1/2 z-40 flex w-[min(720px,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-xl">
+          <LoaderCircle className={`h-5 w-5 flex-shrink-0 text-blue-600 ${isStopping ? '' : 'animate-spin'}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold text-slate-900">{isStopping ? 'Đang dừng automation' : 'Automation đang chạy'}</div>
+            <div className="truncate text-[11px] text-slate-500">{activeProgress?.stepName || 'Đang khởi tạo quy trình...'}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => { void stopWorkflow(); }}
+            disabled={isStopping}
+            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+            {isStopping ? 'Đang dừng...' : 'Dừng Auto'}
+          </button>
         </div>
       )}
       {/* Sidebar - Tối giản, thanh lịch, trung tính, không tốn tài nguyên */}

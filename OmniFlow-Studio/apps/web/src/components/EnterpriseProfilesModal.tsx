@@ -34,7 +34,8 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   const [formDatabase, setFormDatabase] = useState('');
   const [formCompanyName, setFormCompanyName] = useState('');
   const [formCompanySchema, setFormCompanySchema] = useState('');
-  const [formExportPath, setFormExportPath] = useState('D:\\FM_AUTO_OPS');
+  const [formExportPath, setFormExportPath] = useState('');
+  const [defaultExportPath, setDefaultExportPath] = useState('');
 
   // Mappings
   const [storeMappings, setStoreMappings] = useState<Array<{ id: string; name: string }>>([]);
@@ -51,6 +52,12 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   const [editSlocId, setEditSlocId] = useState('');
   const [editSlocName, setEditSlocName] = useState('');
 
+  React.useEffect(() => {
+    invoke<{ documents?: string }>('app:get-paths').then((paths) => {
+      if (paths?.documents) setDefaultExportPath(`${paths.documents}\\OmniFlow_Reports`);
+    }).catch(() => null);
+  }, []);
+
   const startCreate = () => {
     setEditingId(null);
     setFormName('');
@@ -61,18 +68,10 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setFormDatabase('');
     setFormCompanyName('');
     setFormCompanySchema('');
-    setFormExportPath('D:\\OmniFlow_Reports');
-    setStoreMappings([
-      { id: 'ST01', name: 'Flagship Store 01' },
-      { id: 'ST02', name: 'Downtown Branch Store 02' },
-      { id: 'ST03', name: 'West End Mall Store 03' },
-      { id: 'ST04', name: 'Harbor Gateway Store 04' },
-      { id: 'ST05', name: 'Airport Express Store 05' },
-    ]);
-    setSlocMappings([
-      { id: 'DC01', name: 'KHO DC01 - Distribution Hub' },
-      { id: 'DC02', name: 'KHO DC02 - Logistics Center' },
-    ]);
+    setFormExportPath(defaultExportPath);
+    // New profiles have no POS locations until the user configures them here.
+    setStoreMappings([]);
+    setSlocMappings([]);
     setEditingStoreIdx(null);
     setEditingSlocIdx(null);
     setIsEditing(true);
@@ -88,7 +87,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setFormDatabase(p.database || '');
     setFormCompanyName(p.companyName);
     setFormCompanySchema(p.companySchema);
-    setFormExportPath(p.exportPath || 'D:\\FM_AUTO_OPS');
+    setFormExportPath(p.exportPath || defaultExportPath);
     setStoreMappings(p.storeMappings ? [...p.storeMappings] : []);
     setSlocMappings(p.slocMappings ? [...p.slocMappings] : []);
     setEditingStoreIdx(null);
@@ -320,7 +319,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    placeholder="VD: ACME Global Retail Corp"
+                    placeholder="Nhập tên doanh nghiệp"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -334,7 +333,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value)}
-                    placeholder="VD: DEMO_ORG hoặc STANDARD_ERP"
+                    placeholder="Nhập mã tổ chức"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -365,7 +364,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formErpUrl}
                     onChange={(e) => setFormErpUrl(e.target.value)}
-                    placeholder="https://erp.example.com:8100/dispatcher/ hoặc http://pos.example.com"
+                    placeholder="Nhập URL ERP hoặc POS"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -379,7 +378,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formCompanyName}
                     onChange={(e) => setFormCompanyName(e.target.value)}
-                    placeholder="VD: ACME Global Retail Corp (ACME_ERP)"
+                    placeholder="Tên công ty trong ERP"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -393,7 +392,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formCompanySchema}
                     onChange={(e) => setFormCompanySchema(e.target.value)}
-                    placeholder="VD: DEMO_ORG hoặc public"
+                    placeholder="Tên database schema"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -406,7 +405,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     type="text"
                     value={formServer}
                     onChange={(e) => setFormServer(e.target.value)}
-                    placeholder="VD: SBO@sap-cluster.example.com:30013"
+                    placeholder="Địa chỉ server SAP, nếu có"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -419,7 +418,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     type="text"
                     value={formDatabase}
                     onChange={(e) => setFormDatabase(e.target.value)}
-                    placeholder="VD: DEMO_ORG"
+                    placeholder="Tên database hoặc catalog"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -433,7 +432,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                       type="text"
                       value={formExportPath}
                       onChange={(e) => setFormExportPath(e.target.value)}
-                      placeholder="VD: D:\FM_AUTO_OPS"
+                      placeholder="Thư mục lưu báo cáo của doanh nghiệp"
                       className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded bg-slate-50 font-mono text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                     <button
@@ -552,7 +551,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                   <div className="grid grid-cols-12 gap-1.5 pt-2 border-t border-slate-100">
                     <input
                       type="text"
-                      placeholder="Mã (VD: FF0101)"
+                      placeholder="Mã cửa hàng"
                       value={newStoreId}
                       onChange={(e) => setNewStoreId(e.target.value)}
                       className="col-span-4 px-2 py-1.5 text-xs border border-slate-200 rounded font-mono"
@@ -677,7 +676,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                   <div className="grid grid-cols-12 gap-1.5 pt-2 border-t border-slate-100">
                     <input
                       type="text"
-                      placeholder="Mã (VD: DC0101)"
+                      placeholder="Mã kho"
                       value={newSlocId}
                       onChange={(e) => setNewSlocId(e.target.value)}
                       className="col-span-4 px-2 py-1.5 text-xs border border-slate-200 rounded font-mono"

@@ -1,5 +1,5 @@
 // FM AUTO OPS — Security & Credential Manager
-// Uses Windows Credential Manager via keytar & Authenticated AES-256-GCM Secure Storage
+// Uses Windows Credential Manager via keytar & authenticated AES-256-GCM local fallback
 // SECURITY RULES:
 //   - Passwords NEVER logged
 //   - Passwords NEVER sent to cloud
@@ -15,11 +15,10 @@ import path from 'path';
 const keytar = require('keytar') as typeof import('keytar');
 
 const SERVICE_NAME = 'FM-AUTO-OPS';
-const MASTER_KEY_ACCOUNT = 'FM_OPS_MASTER_KEY';
 
 /**
  * Resolve or dynamically generate a 256-bit machine-specific master key.
- * Stores securely in Windows Credential Manager (via keytar) with user-isolated fallback.
+ * Stores in a per-OS-user key file so local database credentials are not portable across users.
  */
 function getOrGenerateMasterKeySync(): string {
   if (process.env.FM_OPS_MASTER_KEY) {
@@ -39,24 +38,25 @@ function getOrGenerateMasterKeySync(): string {
     }
   } catch {}
 
-  // 2. Generate cryptographically strong 256-bit random key
+  // 2. Generate and durably store a cryptographically strong 256-bit key.
   const generatedKey = crypto.randomBytes(32).toString('hex');
 
   try {
-    if (!fs.existsSync(keyDir)) {
-      fs.mkdirSync(keyDir, { recursive: true });
+    fs.mkdirSync(keyDir, { recursive: true });
+    try {
+      fs.writeFileSync(keyFile, generatedKey, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    } catch (writeError) {
+      // Another process may have initialized the key between our read and write.
+      if (!fs.existsSync(keyFile)) throw writeError;
     }
-    fs.writeFileSync(keyFile, generatedKey, { mode: 0o600 });
-  } catch {}
+    const stored = fs.readFileSync(keyFile, 'utf8').trim();
+    if (stored.length >= 32) return stored;
+    throw new Error('Machine encryption key could not be persisted safely.');
+  } catch (error) {
+    throw new Error(`Secure credential storage is unavailable: ${(error as Error).message}`);
+  }
 
-  // 3. Also persist in Windows Credential Manager if keytar is operational
-  try {
-    if (keytar && typeof keytar.setPassword === 'function') {
-      keytar.setPassword(SERVICE_NAME, MASTER_KEY_ACCOUNT, generatedKey).catch(() => {});
-    }
-  } catch {}
-
-  return generatedKey;
+  // The per-user key file is the synchronous fallback used by SecureStorage.
 }
 
 export const SECURE_STORAGE_ALGORITHM = 'aes-256-gcm';

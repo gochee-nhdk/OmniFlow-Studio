@@ -28,8 +28,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build all workspaces (apps/web and packages)
         run: pnpm run build
-      - name: Run E2E Test Suite
-        run: pnpm run test:e2e
+      - name: Run complete test suite (unit, E2E, stress, diagnostics)
+        run: pnpm run test:all
+      - name: Remove artifacts from prior local builds
+        run: if (Test-Path release) { Remove-Item release/* -Recurse -Force }
       - name: Build Electron Installer and Portable ZIP
         run: pnpm --filter @fm/local-agent build:installer
         env:

@@ -5,7 +5,7 @@ The E2E Test Suite provides automated, opaque-box verification of FM-AUTO-OPS au
 
 ### Core Architecture Principles
 1. **Opaque-Box & Decoupled**: Tests interact strictly through public interfaces (Playwright `Page` / DOM APIs, adapter methods, IPC contracts, configuration files, and filesystem artifacts). No internal private method hacking.
-2. **Deterministic & Network-Independent**: Target enterprise servers (`sld.enterprise.example.com:40000`, `pos.enterprise.example.com:80`, `erp.enterprise.example.com:8100`) reside on private corporate subnets. All tests run reliably in CI and offline developer environments via high-fidelity in-memory simulated DOM, Playwright mock harnesses, and cryptographic oracles.
+2. **Deterministic & Network-Independent**: Tests use only reserved `.test` hostnames and in-memory browser pages; production ERP/POS endpoints are never contacted. All tests run reliably in CI and offline developer environments via high-fidelity in-memory simulated DOM, Playwright mock harnesses, and cryptographic oracles.
 3. **Zero External Test Runner Dependencies**: Leverages the Node.js native test runner (`node:test` and `node:assert/strict`) built directly into Node.js (Node >= 20.0.0, Node v24.21.0 active in workspace). Zero installation overhead; executes with native ESM speed.
 4. **Multi-Tier Quality Guarantee**:
    - **Tier 1 (Feature Coverage)**: 42 test cases (6 per feature across 7 features) verifying happy path and functional baselines.

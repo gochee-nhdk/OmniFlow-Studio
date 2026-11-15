@@ -1,20 +1,21 @@
 import { mkdirSync, existsSync, accessSync, constants } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 
-const FM_ROOT = 'D:\\FM_AUTO_OPS';
+const REPORT_ROOT = join(homedir(), 'Documents', 'OmniFlow_Reports');
 const DIRS = ['Inventory', 'Sales', 'SAP', 'PO', 'Return', 'Archive', 'Error', 'Logs', 'Temp'];
 
 console.log('FM AUTO OPS — Initializing Directory Structure...\n');
 
-if (!existsSync(FM_ROOT)) {
-  mkdirSync(FM_ROOT, { recursive: true });
-  console.log(`✓ Created root directory: ${FM_ROOT}`);
+if (!existsSync(REPORT_ROOT)) {
+  mkdirSync(REPORT_ROOT, { recursive: true });
+  console.log(`✓ Created root directory: ${REPORT_ROOT}`);
 } else {
-  console.log(`✓ Root directory exists: ${FM_ROOT}`);
+  console.log(`✓ Root directory exists: ${REPORT_ROOT}`);
 }
 
 for (const dir of DIRS) {
-  const fullPath = join(FM_ROOT, dir);
+  const fullPath = join(REPORT_ROOT, dir);
   if (!existsSync(fullPath)) {
     mkdirSync(fullPath, { recursive: true });
     console.log(`  ✓ Created subfolder: ${fullPath}`);
@@ -24,10 +25,10 @@ for (const dir of DIRS) {
 }
 
 try {
-  accessSync(FM_ROOT, constants.W_OK);
-  console.log('\n✓ Write permission verified on ' + FM_ROOT);
+  accessSync(REPORT_ROOT, constants.W_OK);
+  console.log('\n✓ Write permission verified on ' + REPORT_ROOT);
 } catch {
-  console.error('\n✗ Error: No write permission on ' + FM_ROOT);
+  console.error('\n✗ Error: No write permission on ' + REPORT_ROOT);
   process.exit(1);
 }
 

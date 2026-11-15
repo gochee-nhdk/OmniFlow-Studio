@@ -6,12 +6,16 @@ import { SAPAdapter } from '@fm/sap-adapter';
 import { ExcelValidator, DownloadFileManager } from '@fm/file-engine';
 import { FMDatabase } from '@fm/database';
 import { BrowserManager } from '@fm/browser-engine';
+import os from 'os';
+import path from 'path';
 
 export type StepCallback = (stepName: string, status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED', error?: string) => void;
 
 export interface WorkflowOptions {
   browserManager: BrowserManager;
   db: FMDatabase;
+  posUrl?: string;
+  sapUrl?: string;
   onStepChange?: StepCallback;
   fromDate?: string;
   toDate?: string;
@@ -56,7 +60,7 @@ export class DailyProcurementRunner {
       this.notify('POS: Sales Transaction Detail Automation', 'RUNNING');
       const step2 = this.db.createWorkflowStep(run.id, 'Download Sales Report', 2);
       try {
-        const pos = new POSAdapter(this.browserManager);
+        const pos = new POSAdapter(this.browserManager, opts.posUrl);
         let fromDate = opts.fromDate;
         let toDate = opts.toDate;
         if (!fromDate || !toDate) {
@@ -70,7 +74,7 @@ export class DailyProcurementRunner {
           fromDate,
           toDate,
           storeFilter: opts.storeFilter || 'All',
-          outputDir: opts.salesOutputDir || 'D:\\FM_AUTO_OPS\\Sales',
+          outputDir: opts.salesOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Sales'),
           fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
         });
 
@@ -82,7 +86,7 @@ export class DailyProcurementRunner {
         const fileManager = new DownloadFileManager();
         const finalPath = fileManager.moveAndRename(
           salesResult.tempFilePath,
-          'D:\\FM_AUTO_OPS\\Sales',
+          opts.salesOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Sales'),
           salesResult.suggestedFilename
         );
 
@@ -116,12 +120,12 @@ export class DailyProcurementRunner {
       this.notify('POS: Inventory Onhand Automation', 'RUNNING');
       const step3 = this.db.createWorkflowStep(run.id, 'Download Inventory Report', 3);
       try {
-        const pos = new POSAdapter(this.browserManager);
+        const pos = new POSAdapter(this.browserManager, opts.posUrl);
         const invResult = await pos.downloadInventoryOnhand({
           storeFilter: opts.storeFilter || 'All',
           slocFilter: opts.slocFilter,
           itemFilter: opts.itemFilter,
-          outputDir: opts.inventoryOutputDir || 'D:\\FM_AUTO_OPS\\Inventory',
+          outputDir: opts.inventoryOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Inventory'),
           fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_{YYYY-MM-DD}.xlsx',
         });
 
@@ -130,7 +134,7 @@ export class DailyProcurementRunner {
         const fileManager = new DownloadFileManager();
         const finalPath = fileManager.moveAndRename(
           invResult.tempFilePath,
-          'D:\\FM_AUTO_OPS\\Inventory',
+          opts.inventoryOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Inventory'),
           invResult.suggestedFilename
         );
 
@@ -164,7 +168,7 @@ export class DailyProcurementRunner {
       this.notify('SAP: Session & Health Verification', 'RUNNING');
       const step4 = this.db.createWorkflowStep(run.id, 'Verify SAP Session', 4);
       try {
-        const sap = new SAPAdapter(this.browserManager);
+        const sap = new SAPAdapter(this.browserManager, opts.sapUrl);
         const sapSession = await sap.checkSession();
         this.db.updateWorkflowStep(step4.id, 'SUCCESS');
         this.notify('SAP: Session & Health Verification', 'SUCCESS');

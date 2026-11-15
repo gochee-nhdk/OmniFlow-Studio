@@ -31,7 +31,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     await adapter.setDateFilter(page, 'from', '2026-11-20');
 
@@ -52,7 +52,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     // Leap year date (2024 is a leap year, Feb 29 is valid)
     await adapter.setDateFilter(page, 'from', '2024-02-29');
@@ -74,7 +74,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     // Test malformed date strings
     const invalidDates = [
@@ -103,7 +103,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     // Set custom date
     await adapter.setDateFilter(page, 'from', '2026-11-05');
@@ -229,7 +229,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     // Verify grid is detected as populated
     const isPopulated = await adapter.isGridPopulated(page);
@@ -256,7 +256,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     const isPopulated = await adapter.isGridPopulated(page);
     assert.equal(isPopulated, false);
@@ -281,7 +281,7 @@ test.describe('M3 EMPIRICAL CHALLENGER: Adversarial Stress Test Suite', () => {
     const page = new MockPage(doc, win);
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
 
     // Overlay is initially visible
     loadingWave.style.display = 'block';

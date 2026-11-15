@@ -40,7 +40,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     });
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     // Track wave visibility states
     let waveTransitions = 0;
@@ -81,7 +81,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     });
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     // Wave suddenly pops up after 40ms, then hides at 100ms
     setTimeout(() => {
@@ -105,7 +105,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     });
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     const start = Date.now();
     // Use short timeoutMs = 120ms to verify it does not throw or hang
@@ -122,7 +122,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     });
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     // State A: 0 rows, noData visible -> false
     assert.equal(await adapter.isGridPopulated(page), false);
@@ -148,7 +148,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     });
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     const populated = await adapter.isGridPopulated(page);
     assert.equal(populated, true);
@@ -384,7 +384,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     const { doc, win, fromBox, fromInput } = createMockPOSSalesDocument();
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     // Apply custom date via adapter setDateFilter
     await adapter.setDateFilter(page, 'from', '2026-12-25');
@@ -400,7 +400,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     const { doc, win, fromInput, toInput } = createMockPOSSalesDocument();
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     await adapter.setDateFilter(page, 'from', '2026-12-31');
     await adapter.setDateFilter(page, 'to', '2026-01-01');
@@ -414,7 +414,7 @@ test.describe('Milestone M3 Adversarial Stress Testing', () => {
     const initialVal = fromInput.value;
     const page = new MockPage(doc, win);
     const mockBm = new MockBrowserManager();
-    const adapter = new POSAdapter(mockBm);
+    const adapter = new POSAdapter(mockBm, 'https://pos.test/');
 
     // Pass garbage date string
     await adapter.setDateFilter(page, 'from', 'INVALID_GARBAGE_DATE');

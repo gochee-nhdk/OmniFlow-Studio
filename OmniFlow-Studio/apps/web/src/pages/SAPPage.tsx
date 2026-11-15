@@ -7,23 +7,12 @@ import { useAgentStore } from '../store/agentStore';
 import { useEnterpriseStore } from '../store/enterpriseStore';
 import { invoke } from '../lib/ipc';
 
-const SAP_COMPANIES = [
-  'ACME Global Retail Corp (ACME_ERP)',
-  'Standard Enterprise Retail Group (STANDARD_ERP)',
-  'DEMO Organization (DEMO_ORG)',
-  'DEV - Enterprise Testing (DEV_01)',
-  'UAT - Enterprise Validation (UAT_CORE)',
-];
-
 export default function SAPPage() {
   const { networkStatus, isCheckingNetwork, checkNetwork, activeProgress, isLoading, startWorkflow } = useAgentStore();
-  const { getActiveProfile } = useEnterpriseStore();
-  const activeProfile = getActiveProfile();
+  const { profiles, activeProfileId } = useEnterpriseStore();
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0];
 
-  const companyList = Array.from(new Set([
-    activeProfile?.companyName,
-    ...SAP_COMPANIES
-  ].filter(Boolean) as string[]));
+  const companyList = activeProfile?.companyName ? [activeProfile.companyName] : [];
 
   const [sapUrl, setSapUrl] = useState(() => {
     try {
@@ -34,13 +23,13 @@ export default function SAPPage() {
       return '';
     }
   });
-  const [sapServer, setSapServer] = useState(activeProfile?.server || 'SBO@sap-cluster.enterprise.example.com:30013');
-  const [sapCompany, setSapCompany] = useState(activeProfile?.companyName || 'ACME Global Retail Corp (ACME_ERP)');
+  const [sapServer, setSapServer] = useState(activeProfile?.server || '');
+  const [sapCompany, setSapCompany] = useState(activeProfile?.companyName || '');
   const [sapUser, setSapUser] = useState(() => {
     try {
-      return localStorage.getItem('sap_user') || 'ERP_USER';
+      return localStorage.getItem('sap_user') || '';
     } catch {
-      return 'ERP_USER';
+      return '';
     }
   });
   const [sapPassword, setSapPassword] = useState('');
@@ -50,9 +39,9 @@ export default function SAPPage() {
   const [sapUrlTestResult, setSapUrlTestResult] = useState<{ ok?: boolean; msg?: string } | null>(null);
   const [sapDir, setSapDir] = useState(() => {
     try {
-      return localStorage.getItem('sap_dir') || 'D:\\FM_AUTO_OPS\\SAP';
+      return localStorage.getItem('sap_dir') || '';
     } catch {
-      return 'D:\\FM_AUTO_OPS\\SAP';
+      return '';
     }
   });
   const [autoTakeOverSession, setAutoTakeOverSession] = useState(() => {
@@ -65,34 +54,44 @@ export default function SAPPage() {
   });
   const [sapTargetModule, setSapTargetModule] = useState<'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN'>(() => (localStorage.getItem('sap_target_module') as any) || 'HOME');
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const sapUrlEditedRef = React.useRef(false);
 
   useEffect(() => {
     checkNetwork();
 
-    // Auto-load saved credentials (Username and Password state) without exposing raw secret to localStorage
-    invoke<any>('credentials:get', { accountName: 'SAP_MAIN' }).then((res) => {
+    invoke<any>('app:get-paths').then((paths) => {
+      const profileRoot = activeProfile?.exportPath;
+      const defaultRoot = profileRoot || (paths?.documents ? `${paths.documents}\\OmniFlow_Reports` : '');
+      if (defaultRoot) {
+        setSapDir((current) => current || `${defaultRoot}\\SAP`);
+      }
+    }).catch(() => null);
+
+    // Resolve settings and credential metadata together; settings/local storage are the
+    // authoritative URL sources and a late credential response must not replace user input.
+    Promise.all([
+      invoke<any>('credentials:get', { accountName: 'SAP_MAIN' }).catch(() => null),
+      invoke<any>('settings:get').catch(() => null),
+    ]).then(([res, settingsRes]) => {
+      const data = settingsRes?.data || settingsRes;
       if (res) {
         if (res.username) {
           setSapUser(res.username);
           try { localStorage.setItem('sap_user', res.username); } catch {}
         }
-        if (res.url && res.url.trim()) {
-          setSapUrl(res.url);
-          try { localStorage.setItem('sap_url', res.url); } catch {}
-        }
         if (res.hasPassword) {
           setHasSavedPassword(true);
         }
       }
-    }).catch(() => null);
-
-    // Auto-load saved server, company, and directory settings
-    invoke<any>('settings:get').then((res: any) => {
-      const data = res?.data || res;
-      if (data?.sapUrl) {
-        setSapUrl(data.sapUrl);
-        try { localStorage.setItem('sap_url', data.sapUrl); } catch {}
+      if (!sapUrlEditedRef.current) {
+        const configuredUrl = typeof data?.sapUrl === 'string' ? data.sapUrl.trim() : '';
+        const storedUrl = (() => { try { return localStorage.getItem('sap_url')?.trim() || ''; } catch { return ''; } })();
+        const credentialUrl = typeof res?.url === 'string' ? res.url.trim() : '';
+        const url = storedUrl || configuredUrl || credentialUrl;
+        if (url) {
+          setSapUrl(url);
+          try { localStorage.setItem('sap_url', url); } catch {}
+        }
       }
       if (data?.sapServer) setSapServer(data.sapServer);
       if (data?.sapCompany) setSapCompany(data.sapCompany);
@@ -107,10 +106,11 @@ export default function SAPPage() {
       } else if (data?.defaultSavePath) {
         setSapDir(`${data.defaultSavePath}\\SAP`);
       }
-    }).catch(() => null);
+    });
   }, []);
 
   const handleSapUrlChange = (val: string) => {
+    sapUrlEditedRef.current = true;
     setSapUrl(val);
     setSapUrlTestResult(null);
     try { localStorage.setItem('sap_url', val); } catch {}
@@ -135,33 +135,14 @@ export default function SAPPage() {
     }
   };
 
-  const persistCredentials = (newUser: string, newPass: string, newUrl: string = sapUrl) => {
-    try {
-      if (newUser) localStorage.setItem('sap_user', newUser);
-    } catch {}
-
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      if (newUser && newPass) {
-        invoke('credentials:save', {
-          accountName: 'SAP_MAIN',
-          username: newUser,
-          password: newPass,
-          application: 'SAP',
-          url: newUrl || activeProfile?.erpUrl || 'https://erp.enterprise.example.com:8100/dispatcher/',
-        }).then(() => setHasSavedPassword(true)).catch(() => null);
-      }
-    }, 600);
-  };
-
   const handleUserChange = (val: string) => {
     setSapUser(val);
-    persistCredentials(val, sapPassword, sapUrl);
+    try { localStorage.setItem('sap_user', val); } catch {}
   };
 
   const handlePasswordChange = (val: string) => {
     setSapPassword(val);
-    persistCredentials(sapUser, val, sapUrl);
+    setHasSavedPassword(false);
   };
 
   const handleSapDirChange = (val: string) => {
@@ -193,8 +174,10 @@ export default function SAPPage() {
           username: sapUser,
           password: sapPassword,
           application: 'SAP',
-          url: sapUrl || activeProfile?.erpUrl || 'https://erp.enterprise.example.com:8100/dispatcher/',
+          url: sapUrl || activeProfile?.erpUrl || '',
         });
+        const verification = await invoke<any>('credentials:get', { accountName: 'SAP_MAIN' });
+        if (!verification?.hasPassword) throw new Error('Ứng dụng chưa xác nhận được mật khẩu đã lưu. Vui lòng thử lại.');
         setHasSavedPassword(true);
       }
 
@@ -222,15 +205,21 @@ export default function SAPPage() {
 
   const handleRunSapAuth = async () => {
     if (sapUser && sapPassword) {
-      invoke('credentials:save', {
-        accountName: 'SAP_MAIN',
-        username: sapUser,
-        password: sapPassword,
-        application: 'SAP',
-        url: sapUrl || activeProfile?.erpUrl || 'https://erp.enterprise.example.com:8100/dispatcher/',
-      }).then(() => setHasSavedPassword(true)).catch(() => null);
+      try {
+        await invoke('credentials:save', {
+          accountName: 'SAP_MAIN',
+          username: sapUser,
+          password: sapPassword,
+          application: 'SAP',
+          url: sapUrl || activeProfile?.erpUrl || '',
+        });
+        setHasSavedPassword(true);
+      } catch (error: any) {
+        alert(`Không thể lưu mật khẩu SAP nên chưa chạy automation: ${error?.message || error}`);
+        return;
+      }
 
-      invoke('settings:set', {
+      await invoke('settings:set', {
         sapUrl,
         sapServer,
         sapCompany,
@@ -264,7 +253,7 @@ export default function SAPPage() {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-              {activeProfile?.code || 'DEFAULT'}
+              {activeProfile?.code || 'Chưa cấu hình'}
             </span>
             <span className="text-xs text-slate-500 font-medium">
               {activeProfile?.name}
@@ -275,7 +264,7 @@ export default function SAPPage() {
             <h1 className="text-xl font-bold text-slate-900">SAP Business One Automation</h1>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Quản lý xác thực SAP SLD &amp; Tự động hóa luồng PO &amp; Đổi trả ({sapUrl || activeProfile?.erpUrl || 'https://erp.enterprise.example.com:8100/dispatcher/'})
+            Quản lý xác thực SAP SLD &amp; Tự động hóa luồng PO &amp; Đổi trả ({sapUrl || activeProfile?.erpUrl || 'Chưa cấu hình URL'})
           </p>
         </div>
 
@@ -299,12 +288,13 @@ export default function SAPPage() {
               : isSapOnline
               ? `SAP Server Kết nối (${(() => {
                   try {
-                    return new URL(sapUrl || activeProfile?.erpUrl || 'https://erp.enterprise.example.com:8100').host;
+                    const targetUrl = sapUrl || activeProfile?.erpUrl;
+                    return targetUrl ? new URL(targetUrl).host : 'Chưa cấu hình';
                   } catch {
                     return sapUrl;
                   }
                 })()})`
-              : 'SAP Mất kết nối'}
+              : (sapUrl || activeProfile?.erpUrl ? 'SAP Mất kết nối' : 'Chưa cấu hình SAP')}
           </div>
           <button
             onClick={() => checkNetwork({ showFeedback: true })}
@@ -351,7 +341,7 @@ export default function SAPPage() {
               type="text"
               value={sapUrl}
               onChange={(e) => handleSapUrlChange(e.target.value)}
-              placeholder="VD: https://172.16.1.210:8100/dispatcher/ hoặc https://erp.yourdomain.local:8100/dispatcher/"
+              placeholder="Nhập URL kết nối ERP / POS do doanh nghiệp cung cấp"
               className="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono text-slate-800"
             />
             <button
@@ -440,7 +430,7 @@ export default function SAPPage() {
                 type={showSapPassword ? 'text' : 'password'}
                 value={sapPassword}
                 onChange={(e) => handlePasswordChange(e.target.value)}
-                placeholder={hasSavedPassword ? '•••••••• (Đã lưu an toàn)' : '••••••••'}
+                placeholder={hasSavedPassword ? 'Đã lưu an toàn — nhập mật khẩu mới để thay đổi' : 'Nhập mật khẩu SAP'}
                 className="w-full pl-3 pr-9 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
               />
               <button

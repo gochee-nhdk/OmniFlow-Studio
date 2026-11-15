@@ -1,3 +1,5 @@
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = "d:\tool auto\FM-AUTO-OPS"
-WshShell.Run "node scripts/serve.mjs", 0, False
+Set shell = CreateObject("WScript.Shell")
+scriptDir = CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName)
+command = "node """ & scriptDir & "\scripts\serve.mjs"""
+shell.CurrentDirectory = scriptDir
+shell.Run command, 0, False

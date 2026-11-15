@@ -48,7 +48,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2026-11-01');
 
     assert.equal(fromInput.value, '01/11/2026');
@@ -62,7 +62,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'to', '2026-11-10');
 
     assert.equal(toInput.value, '10/11/2026');
@@ -76,7 +76,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2026-11-01');
     await adapter.setDateFilter(page, 'to', '2026-11-10');
 
@@ -125,7 +125,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2028-02-29');
 
     const inst = win.DevExpress.ui.dxDateBox.getInstance(fromBox);
@@ -141,7 +141,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2026-12-30');
     await adapter.setDateFilter(page, 'to', '2027-01-05');
 
@@ -168,7 +168,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.setDateFilter(page, 'from', '2026-11-01');
 
     // Trigger simulated blur / Angular change detection cycle
@@ -192,7 +192,7 @@ test.describe('R2: POS Sales Date Range and Download', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     // Malformed date string should be caught gracefully without uncaught rejection
     await assert.doesNotReject(async () => {
       await adapter['setDateFilter'](page, 'from', '2026-99-99');

@@ -82,6 +82,7 @@ interface AgentStore {
   isCheckingNetwork: boolean;
   networkFeedback: NetworkFeedback | null;
   isLoading: boolean;
+  isStopping: boolean;
   pendingUserAction: { message: string; runId: string } | null;
   activeProgress: WorkflowProgress | null;
 
@@ -116,6 +117,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     isCheckingNetwork: false,
     networkFeedback: null,
     isLoading: false,
+    isStopping: false,
     pendingUserAction: null,
     activeProgress: null,
 
@@ -193,6 +195,7 @@ export const useAgentStore = create<AgentStore>((set, get) => {
     startWorkflow: async (type: string, payload?: unknown) => {
       set({
         isLoading: true,
+        isStopping: false,
         activeProgress: {
           runId: '',
           workflowType: type,
@@ -216,15 +219,35 @@ export const useAgentStore = create<AgentStore>((set, get) => {
           },
         });
       } finally {
-        set({ isLoading: false });
+        set({ isLoading: false, isStopping: false });
         await get().loadHistory();
         await get().refreshStatus();
       }
     },
 
     stopWorkflow: async () => {
-      await invoke('workflow:stop');
-      set({ isLoading: false, activeProgress: null });
+      if (!get().isLoading || get().isStopping) return;
+      set({
+        isStopping: true,
+        activeProgress: get().activeProgress ? {
+          ...get().activeProgress!,
+          status: 'STOPPING',
+          stepName: 'Đang dừng automation an toàn...',
+        } : null,
+      });
+      try {
+        await invoke('workflow:stop');
+      } catch (error) {
+        set({
+          isStopping: false,
+          activeProgress: {
+            ...(get().activeProgress || { runId: '', workflowType: '', index: 99 }),
+            status: 'FAILED',
+            stepName: `Không thể dừng automation: ${(error as Error).message}`,
+            errorMessage: (error as Error).message,
+          },
+        });
+      }
     },
 
     respondToUserAction: async (runId: string, confirmed: boolean) => {

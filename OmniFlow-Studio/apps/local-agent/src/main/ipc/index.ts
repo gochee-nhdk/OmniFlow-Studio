@@ -1,4 +1,4 @@
-import { ipcMain, shell, dialog } from 'electron';
+import { app, ipcMain, shell, dialog, safeStorage } from 'electron';
 import { FMDatabase } from '@fm/database';
 import { credentialManager, SecureStorage } from '@fm/security';
 import { BrowserManager } from '@fm/browser-engine';
@@ -11,7 +11,7 @@ import net from 'net';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { DEFAULT_ENTERPRISE_PROFILES, EnterpriseProfile } from '@fm/shared-types';
+import { EnterpriseProfile } from '@fm/shared-types';
 
 interface LocalAppConfig {
   sapUrl?: string;
@@ -48,13 +48,36 @@ const localConfig = loadLocalAppConfig();
 
 let db: FMDatabase | null = null;
 let browserManager: BrowserManager | null = null;
+let activeWorkflowRunId: string | null = null;
+let stopRequestedWorkflowRunId: string | null = null;
 let lastKnownSapReachable: boolean = false;
 let lastKnownPosReachable: boolean = false;
+
+const SAFE_STORAGE_CREDENTIAL_PREFIX = 'electron-safe-storage:v1:';
+
+function encryptLocalCredential(password: string): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    return SAFE_STORAGE_CREDENTIAL_PREFIX + safeStorage.encryptString(password).toString('base64');
+  }
+  return SecureStorage.encrypt(password);
+}
+
+function decryptLocalCredential(stored: string): string {
+  if (stored.startsWith(SAFE_STORAGE_CREDENTIAL_PREFIX)) {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('Windows credential encryption is unavailable in this session.');
+    }
+    const encrypted = Buffer.from(stored.slice(SAFE_STORAGE_CREDENTIAL_PREFIX.length), 'base64');
+    return safeStorage.decryptString(encrypted);
+  }
+  // Backward compatibility for encrypted credentials saved by older app versions.
+  return SecureStorage.decrypt(stored);
+}
 
 export function registerAll(dbPath: string): void {
   db = new FMDatabase(dbPath);
   browserManager = new BrowserManager({
-    downloadDir: 'D:\\FM_AUTO_OPS\\Temp',
+    downloadDir: path.join(app.getPath('userData'), 'Temp'),
     headless: false,
   });
 
@@ -74,17 +97,17 @@ function getMergedAppSettings(): Record<string, any> {
 }
 
 function getEnterpriseProfiles(): EnterpriseProfile[] {
-  if (!db) return [...DEFAULT_ENTERPRISE_PROFILES];
+  if (!db) return [];
   try {
     const stored = db.getSetting('enterprise_profiles');
     if (stored) return JSON.parse(stored) as EnterpriseProfile[];
   } catch {}
-  return [...DEFAULT_ENTERPRISE_PROFILES];
+  return [];
 }
 
 function registerEnterpriseHandlers(): void {
   ipcMain.handle('enterprise:list', async () => {
-    if (!db) return { profiles: DEFAULT_ENTERPRISE_PROFILES, activeId: DEFAULT_ENTERPRISE_PROFILES[0]?.id };
+    if (!db) return { profiles: [], activeId: '' };
     const profiles = getEnterpriseProfiles();
     let activeId = db.getSetting('active_enterprise_id') || profiles.find((profile) => profile.isActive)?.id || profiles[0]?.id;
     return { profiles, activeId };
@@ -185,6 +208,7 @@ function registerWorkflowHandlers(): void {
     };
   }) => {
     if (!db || !browserManager) throw new Error('Database or BrowserManager not ready');
+    if (activeWorkflowRunId) throw new Error('An automation is already running. Stop it and wait for it to finish first.');
 
     const payload = rawPayload as typeof rawPayload & { options?: Record<string, any> };
     const incomingOpts = payload.options || payload.payload || {};
@@ -213,6 +237,11 @@ function registerWorkflowHandlers(): void {
     };
 
     const run = db.createWorkflowRun(payload.type);
+    activeWorkflowRunId = run.id;
+    stopRequestedWorkflowRunId = null;
+    const assertNotStopped = () => {
+      if (stopRequestedWorkflowRunId === run.id) throw new Error('Workflow stopped by user.');
+    };
 
     const broadcastStep = (stepName: string, status: string, index: number, errorMessage?: string) => {
       try {
@@ -237,6 +266,7 @@ function registerWorkflowHandlers(): void {
       try {
         // --- 1. POS AUTOMATION BRANCH ---
         if (isPosTask) {
+          assertNotStopped();
           const step1 = db.createWorkflowStep(run.id, 'Check POS RPFO Connectivity', 1);
           broadcastStep('Check POS RPFO Connectivity', 'RUNNING', 1);
           const appSettingsRaw = db.getSetting('app_settings');
@@ -246,7 +276,8 @@ function registerWorkflowHandlers(): void {
           } catch {}
 
           const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
-          const targetPosUrl = opts.posBaseUrl || opts.posUrl || opts.baseUrl || activeProfile?.posUrl || appSettings.posBaseUrl || appSettings.posUrl || (posMeta?.url && posMeta.url.trim() ? posMeta.url : null) || process.env.POS_URL || localConfig.posUrl || 'http://pos.enterprise.example.com/';
+          const targetPosUrl = opts.posBaseUrl || opts.posUrl || opts.baseUrl || activeProfile?.posUrl || appSettings.posBaseUrl || appSettings.posUrl || (posMeta?.url && posMeta.url.trim() ? posMeta.url : null) || process.env.POS_URL || localConfig.posUrl || '';
+          if (!targetPosUrl) throw new Error('Chưa cấu hình URL POS. Hãy nhập URL trong mục kết nối POS trước khi chạy automation.');
           const posAdapter = new POSAdapter(browserManager, targetPosUrl);
 
           let posPassword = opts.posPassword;
@@ -259,13 +290,13 @@ function registerWorkflowHandlers(): void {
             const cached = db.getSetting('cred_POS_MAIN');
             if (cached) {
               try {
-                posPassword = SecureStorage.decrypt(cached);
+              posPassword = decryptLocalCredential(cached);
               } catch {
                 // Insecure base64 fallback eliminated
               }
             }
           }
-          const defaultPosUser = process.env.POS_USER || localConfig.posUser || 'STORE_ADMIN';
+          const defaultPosUser = process.env.POS_USER || localConfig.posUser || '';
           const posUsername = opts.posUser || (posMeta ? String(posMeta.username || '') : defaultPosUser);
           const posCreds = posPassword ? { username: posUsername, password: posPassword } : undefined;
 
@@ -283,6 +314,7 @@ function registerWorkflowHandlers(): void {
               // Non-fatal if transient, download methods will re-attempt authentication
             }
           }
+          assertNotStopped();
 
           db.updateWorkflowStep(step1.id, 'SUCCESS');
           broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
@@ -302,7 +334,7 @@ function registerWorkflowHandlers(): void {
             const fromD = opts.fromDate || dateRange.from;
             const toD = opts.toDate || dateRange.to;
             const storeF = opts.storeFilter || 'All';
-            const targetSalesDir = opts.salesOutputDir || opts.outputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Sales');
+            const targetSalesDir = opts.salesOutputDir || opts.outputDir || path.join(app.getPath('documents'), 'OmniFlow_Reports', 'Sales');
 
             broadcastStep(`POS: Tải Sales Detail (${fromD} → ${toD})`, 'RUNNING', 2);
             const result = await posAdapter.downloadSalesTransactionDetail({
@@ -313,6 +345,7 @@ function registerWorkflowHandlers(): void {
               fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
               orgCode: opts.orgCode,
             }, posCreds);
+            assertNotStopped();
 
             const validator = new ExcelValidator();
             const validation = await validator.validateWorkbook(result.tempFilePath);
@@ -344,9 +377,10 @@ function registerWorkflowHandlers(): void {
 
           // Download Inventory Onhand
           if (doInventory) {
+            assertNotStopped();
             const stepInv = db.createWorkflowStep(run.id, 'POS: Download Inventory Onhand', 3);
             const invStore = opts.inventoryStoreFilter || 'All';
-            const targetInvDir = opts.inventoryOutputDir || opts.outputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Inventory');
+            const targetInvDir = opts.inventoryOutputDir || opts.outputDir || path.join(app.getPath('documents'), 'OmniFlow_Reports', 'Inventory');
             broadcastStep(`POS: Tải Inventory Onhand (Kho: ${invStore})`, 'RUNNING', 3);
             try {
               const invResult = await posAdapter.downloadInventoryOnhand({
@@ -381,6 +415,7 @@ function registerWorkflowHandlers(): void {
               db.updateWorkflowStep(stepInv.id, 'SUCCESS');
               broadcastStep(`POS: Tải Inventory Onhand (${validation.rowCount || 0} dòng)`, 'SUCCESS', 3);
             } catch (invErr) {
+              if (stopRequestedWorkflowRunId === run.id) throw invErr;
               console.warn('Inventory download inspection:', (invErr as Error).message);
               db.updateWorkflowStep(stepInv.id, 'SKIPPED');
               broadcastStep('POS: Tải Inventory Onhand (Tạm bỏ qua)', 'SKIPPED', 3);
@@ -390,6 +425,7 @@ function registerWorkflowHandlers(): void {
 
         // --- 2. SAP AUTOMATION BRANCH ---
         if (isSapTask) {
+          assertNotStopped();
           const stepSap = db.createWorkflowStep(run.id, 'SAP Business One SLD Authentication', 4);
           broadcastStep('SAP: Khởi động & Đăng nhập SLD', 'RUNNING', 4);
           let sapPassword = opts.sapPassword;
@@ -402,14 +438,14 @@ function registerWorkflowHandlers(): void {
             const cached = db.getSetting('cred_SAP_MAIN');
             if (cached) {
               try {
-                sapPassword = SecureStorage.decrypt(cached);
+                sapPassword = decryptLocalCredential(cached);
               } catch {
                 // Insecure base64 fallback eliminated
               }
             }
           }
           const sapMeta = db.listCredentialMeta().find((m) => m.accountName === 'SAP_MAIN' || m.account_name === 'SAP_MAIN');
-          const defaultSapUser = process.env.SAP_USER || localConfig.sapUser || 'ERP_USER';
+          const defaultSapUser = process.env.SAP_USER || localConfig.sapUser || '';
           const sapUsername = opts.sapUser || (sapMeta ? String(sapMeta.username || '') : defaultSapUser);
           const appSettingsRaw = db.getSetting('app_settings');
           let appSettings: { sapServer?: string; sapCompany?: string; sapUrl?: string } = {};
@@ -420,11 +456,13 @@ function registerWorkflowHandlers(): void {
           }
 
           if (sapPassword) {
-            const defaultSapServer = process.env.SAP_SERVER || localConfig.sapServer || 'SBO@sap-cluster.enterprise.example.com:30013';
-            const defaultSapCompany = process.env.SAP_COMPANY || localConfig.sapCompany || 'ACME Global Retail Corp (ACME_ERP)';
+            const defaultSapServer = process.env.SAP_SERVER || localConfig.sapServer || '';
+            const defaultSapCompany = process.env.SAP_COMPANY || localConfig.sapCompany || '';
             const targetServer = opts.sapServer || appSettings.sapServer || defaultSapServer;
             const targetCompany = opts.sapCompany || appSettings.sapCompany || defaultSapCompany;
-            const targetSapUrl = opts.sapUrl || opts.sapBaseUrl || activeProfile?.erpUrl || appSettings.sapUrl || (sapMeta?.url && sapMeta.url.trim() ? sapMeta.url : null) || process.env.SAP_URL || localConfig.sapUrl || 'https://erp.enterprise.example.com:8100/dispatcher/';
+            const targetSapUrl = opts.sapUrl || opts.sapBaseUrl || activeProfile?.erpUrl || appSettings.sapUrl || (sapMeta?.url && sapMeta.url.trim() ? sapMeta.url : null) || process.env.SAP_URL || localConfig.sapUrl || '';
+            if (!targetSapUrl) throw new Error('Chưa cấu hình URL SAP. Hãy nhập URL trong mục kết nối SAP trước khi chạy automation.');
+            if (!targetServer || !targetCompany || !sapUsername) throw new Error('Thiếu Server, Company Database hoặc User ID SAP. Hãy hoàn tất cấu hình trước khi chạy automation.');
 
             const sapAdapter = new SAPAdapter(
               browserManager,
@@ -445,6 +483,7 @@ function registerWorkflowHandlers(): void {
             }, (progressMsg: string) => {
               broadcastStep(progressMsg, 'RUNNING', 4);
             });
+            assertNotStopped();
 
             db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED');
             broadcastStep('SAP Business One Đăng nhập', loginRes.success ? 'SUCCESS' : 'FAILED', 4);
@@ -454,10 +493,20 @@ function registerWorkflowHandlers(): void {
           }
         }
 
+        assertNotStopped();
         db.updateWorkflowRunStatus(run.id, 'SUCCESS');
         broadcastStep('Hoàn thành Quy trình Automation', 'SUCCESS', 99);
+        activeWorkflowRunId = null;
+        stopRequestedWorkflowRunId = null;
         return db.getWorkflowRun(run.id) || run;
       } catch (err) {
+        if (stopRequestedWorkflowRunId === run.id) {
+          db.updateWorkflowRunStatus(run.id, 'CANCELLED', 'Dừng theo yêu cầu người dùng.');
+          broadcastStep('Automation đã dừng theo yêu cầu.', 'CANCELLED', 99);
+          activeWorkflowRunId = null;
+          stopRequestedWorkflowRunId = null;
+          return db.getWorkflowRun(run.id) || run;
+        }
         db.logError({
           runId: run.id,
           errorType: 'DOWNLOAD_FAILED',
@@ -466,19 +515,24 @@ function registerWorkflowHandlers(): void {
         });
         db.updateWorkflowRunStatus(run.id, 'FAILED', (err as Error).message);
         broadcastStep('Lỗi Quy trình: ' + (err as Error).message, 'FAILED', 99, (err as Error).message);
+        activeWorkflowRunId = null;
+        stopRequestedWorkflowRunId = null;
         throw err;
       }
     }
 
     db.updateWorkflowRunStatus(run.id, 'FAILED', `Workflow ${payload.type} completed initial run.`);
+    activeWorkflowRunId = null;
     return db.getWorkflowRun(run.id) || run;
   });
 
   ipcMain.handle('workflow:stop', async () => {
+    if (!activeWorkflowRunId) return { stopped: false };
+    stopRequestedWorkflowRunId = activeWorkflowRunId;
     if (browserManager) {
       await browserManager.closeAll();
     }
-    return { stopped: true };
+    return { stopped: true, runId: activeWorkflowRunId };
   });
 
   ipcMain.handle('workflow:history', async (_event, payload?: { limit?: number }) => {
@@ -503,7 +557,7 @@ function registerCredentialHandlers(): void {
       const cached = db.getSetting(`cred_${payload.accountName}`);
       if (cached) {
         try {
-          const decrypted = SecureStorage.decrypt(cached);
+          const decrypted = decryptLocalCredential(cached);
           if (decrypted) hasPassword = true;
         } catch {
           // Insecure base64 fallback eliminated
@@ -528,20 +582,34 @@ function registerCredentialHandlers(): void {
     url: string;
   }) => {
     if (!db) throw new Error('Database not initialized');
-    
-    // 1. Store in native OS Credential Vault
+
+    // Do not report success unless at least one durable credential store confirms the write.
+    let nativeStored = false;
+    let encryptedStored = false;
+    const storageErrors: string[] = [];
+
+    // 1. Store and verify in the current OS user's credential vault.
     try {
       await credentialManager.setPassword(payload.accountName, payload.password);
-    } catch (e) {
-      console.warn('keytar setPassword warning:', (e as Error).message);
+      nativeStored = (await credentialManager.getPassword(payload.accountName)) === payload.password;
+      if (!nativeStored) storageErrors.push('Windows Credential Manager did not confirm the saved password.');
+    } catch (error) {
+      storageErrors.push(`Windows Credential Manager: ${(error as Error).message}`);
     }
-    
-    // 2. Cache encrypted fallback in sqlite settings table using authenticated AES-256-GCM
+
+    // 2. Keep an authenticated, machine-key-encrypted fallback in this user's local database.
     try {
-      const enc = SecureStorage.encrypt(payload.password);
+      const enc = encryptLocalCredential(payload.password);
       db.setSetting(`cred_${payload.accountName}`, enc);
-    } catch (err) {
-      console.warn('SecureStorage encrypt fallback warning:', (err as Error).message);
+      const stored = db.getSetting(`cred_${payload.accountName}`);
+      encryptedStored = Boolean(stored && decryptLocalCredential(stored) === payload.password);
+      if (!encryptedStored) storageErrors.push('Encrypted local storage did not confirm the saved password.');
+    } catch (error) {
+      storageErrors.push(`Encrypted local storage: ${(error as Error).message}`);
+    }
+
+    if (!nativeStored && !encryptedStored) {
+      throw new Error(`Mật khẩu chưa được lưu. ${storageErrors.join(' ')}`);
     }
 
     // 3. Upsert metadata
@@ -555,7 +623,7 @@ function registerCredentialHandlers(): void {
     });
 
     db.audit('credentials:save', payload.accountName, { application: payload.application });
-    return { saved: true };
+    return { saved: true, storedIn: [nativeStored ? 'os-vault' : null, encryptedStored ? 'local-database' : null].filter(Boolean) };
   });
 
   ipcMain.handle('credentials:test', async (_event, payload: { url: string }) => {
@@ -728,13 +796,7 @@ function registerNetworkHandlers(): void {
   };
 
   ipcMain.handle('network:probe-endpoints', async (_event, endpoints?: Array<{ id: string; url: string; port: number }>) => {
-    const defaultEndpoints = localConfig.endpoints || [
-      { id: 'sap-web', name: 'SAP Business One Web Client', url: process.env.SAP_URL || localConfig.sapUrl || 'https://erp.enterprise.example.com:8100/dispatcher/', port: 8100 },
-      { id: 'sap-sld', name: 'SAP System Landscape Directory (SLD)', url: process.env.SAP_SLD_URL || 'https://sld.enterprise.example.com:40000/ControlCenter/sbo.html', port: 40000 },
-      { id: 'pos-web', name: 'POS RPFO Web Application', url: process.env.POS_URL || localConfig.posUrl || 'http://pos.enterprise.example.com/', port: 80 },
-    ];
-
-    const targets = endpoints && endpoints.length > 0 ? endpoints : defaultEndpoints;
+    const targets = endpoints ?? localConfig.endpoints ?? [];
 
     const results = await Promise.all(
       targets.map(async (ep) => {
@@ -759,14 +821,22 @@ function registerNetworkHandlers(): void {
   });
 
   ipcMain.handle('network:check', async (_event, payload?: { sapHost?: string; sapPort?: number; posHost?: string; posPort?: number }) => {
-    const sapHost = payload?.sapHost || process.env.SAP_HOST || localConfig.sapHost || 'erp.enterprise.example.com';
-    const sapPort = payload?.sapPort || (process.env.SAP_PORT ? parseInt(process.env.SAP_PORT, 10) : undefined) || localConfig.sapPort || 8100;
-    const posHost = payload?.posHost || process.env.POS_HOST || localConfig.posHost || 'pos.enterprise.example.com';
-    const posPort = payload?.posPort || (process.env.POS_PORT ? parseInt(process.env.POS_PORT, 10) : undefined) || localConfig.posPort || 80;
-
+    const profileList = getEnterpriseProfiles();
+    const activeId = db?.getSetting('active_enterprise_id') || profileList.find((profile) => profile.isActive)?.id;
+    const activeProfile = profileList.find((profile) => profile.id === activeId) || profileList[0];
+    const settings = getMergedAppSettings();
+    const sapUrl = payload?.sapHost
+      ? `https://${payload.sapHost}:${payload.sapPort || 8100}/`
+      : settings.sapUrl || activeProfile?.erpUrl || process.env.SAP_URL || localConfig.sapUrl || '';
+    const posUrl = payload?.posHost
+      ? `http://${payload.posHost}:${payload.posPort || 80}/`
+      : settings.posBaseUrl || settings.posUrl || activeProfile?.posUrl || process.env.POS_URL || localConfig.posUrl || '';
+    const parsePort = (value: string, fallback: number) => {
+      try { const parsed = new URL(value); return Number(parsed.port) || fallback; } catch { return fallback; }
+    };
     const [sapProbe, posProbe] = await Promise.all([
-      probeEndpoint(`https://${sapHost}:${sapPort}/`, sapPort),
-      probeEndpoint(`http://${posHost}:${posPort}/`, posPort),
+      sapUrl ? probeEndpoint(sapUrl, parsePort(sapUrl, 443)) : Promise.resolve({ reachable: false, latencyMs: 0, error: 'Chưa cấu hình URL SAP' }),
+      posUrl ? probeEndpoint(posUrl, parsePort(posUrl, 80)) : Promise.resolve({ reachable: false, latencyMs: 0, error: 'Chưa cấu hình URL POS' }),
     ]);
 
     lastKnownSapReachable = sapProbe.reachable;
@@ -785,9 +855,17 @@ function registerNetworkHandlers(): void {
 }
 
 function registerFileHandlers(): void {
+  ipcMain.handle('app:get-paths', async () => ({
+    documents: app.getPath('documents'),
+    downloads: app.getPath('downloads'),
+    userData: app.getPath('userData'),
+    temp: app.getPath('temp'),
+    logs: path.join(app.getPath('userData'), 'logs'),
+  }));
+
   ipcMain.handle('dialog:open-directory', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog({
-      defaultPath: defaultPath || 'D:\\FM_AUTO_OPS',
+      defaultPath: defaultPath || app.getPath('documents'),
       properties: ['openDirectory', 'createDirectory']
     });
     if (result.canceled || result.filePaths.length === 0) return null;

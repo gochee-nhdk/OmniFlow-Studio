@@ -21,7 +21,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
 
     assert.equal(win.__searchClicks, 0);
@@ -35,7 +35,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     setTimeout(() => { loadingWave.style.display = 'none'; }, 20);
 
     await adapter.waitForLoadingWaveToEnd(page);
@@ -61,7 +61,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
 
     assert.equal(win.__searchClicks, 1);
@@ -85,7 +85,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
 
     assert.equal(win.__searchClicks, 3);
@@ -118,7 +118,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     const browser = new MockBrowserManager();
     browser.setPage('POS', page);
 
-    const adapter = new POSAdapter(browser);
+    const adapter = new POSAdapter(browser, 'https://pos.test/');
     await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
 
     assert.equal(win.__searchClicks, 6);

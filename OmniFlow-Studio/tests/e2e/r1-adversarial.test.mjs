@@ -49,7 +49,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
       selectCompany.appendChild(opt2);
     }, 3000);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const startTime = Date.now();
     const result = await adapter.login({
       username: 'manager',
@@ -80,7 +80,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -103,7 +103,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -126,7 +126,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -153,7 +153,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     browser.setPage('SAP', page);
 
     const progressLogs = [];
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const startTime = Date.now();
 
     const result = await adapter.login({
@@ -187,7 +187,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     browser.setPage('SAP', page);
 
     const progressLogs = [];
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
 
     const result = await adapter.login({
       username: 'locked_user',
@@ -214,7 +214,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'manager',
       password: 'pwd',
@@ -242,7 +242,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     // User provides just the schema substring without parenthesis
     const result = await adapter.login({
       username: 'manager',
@@ -266,7 +266,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     // Target is exactly the main company (FM_PRO), not the branch that appears first
     const result = await adapter.login({
       username: 'manager',
@@ -299,7 +299,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
       }
     });
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -331,7 +331,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     browser.setPage('SAP', page);
 
     const logs = [];
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const result = await adapter.login({
       username: 'admin',
       password: 'Password123!',
@@ -354,7 +354,7 @@ test.describe('Adversarial & Edge Case Verification — SAP SLD Logon', () => {
     const browser = new MockBrowserManager();
     browser.setPage('SAP', page);
 
-    const adapter = new SAPAdapter(browser);
+    const adapter = new SAPAdapter(browser, 'https://sap.test/dispatcher/');
     const s1 = await adapter.checkSession();
     assert.equal(s1.authState, 'LOGIN_REQUIRED');
 
