@@ -163,6 +163,13 @@ test('Scenario 7: SecureStorage instance and static methods use the same dynamic
   }
 });
 
+test('Scenario 8: Active browser attach IPC channel is allowed by preload and registered by main', () => {
+  const preload = fs.readFileSync(new URL('../../apps/local-agent/src/preload/index.ts', import.meta.url), 'utf8');
+  const mainIpc = fs.readFileSync(new URL('../../apps/local-agent/src/main/ipc/index.ts', import.meta.url), 'utf8');
+  assert.match(preload, /ALLOWED_INVOKE_CHANNELS[\s\S]*?'browser:enable-active-attach'/);
+  assert.match(mainIpc, /ipcMain\.handle\('browser:enable-active-attach'/);
+});
+
 test('Scenario 5: SAP Export to Excel Helper', async () => {
   const dummyManager = new BrowserManager({ downloadDir: os.tmpdir() });
   const sap = new SAPAdapter(dummyManager, 'https://sap-test.example.com');

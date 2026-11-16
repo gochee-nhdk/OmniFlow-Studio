@@ -20,6 +20,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>([
   'app:get-paths',
   'browser:launch',
   'browser:close',
+  'browser:enable-active-attach',
   'files:open-dir',
   'files:history',
   'errors:list',

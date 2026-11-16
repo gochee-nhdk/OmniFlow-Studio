@@ -127,6 +127,7 @@ export default function Layout() {
             onClick={async () => {
               try {
                 const res = await invoke<{ success: boolean; message?: string; error?: string }>('browser:enable-active-attach');
+                if (!res?.success) throw new Error(res?.error || 'Không thể khởi chạy trình duyệt với cổng CDP.');
                 alert(res?.message || 'Đã kích hoạt chế độ gắn kết trình duyệt cổng 9222.');
               } catch (e: any) {
                 alert('Lỗi kết nối trình duyệt: ' + (e?.message || e));
