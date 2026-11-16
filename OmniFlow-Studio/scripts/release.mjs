@@ -146,6 +146,22 @@ async function main() {
   log('BUILD', `Web UI distribution confirmed at: ${indexHtmlPath} (${fs.statSync(indexHtmlPath).size} bytes)`);
 
   // 4. Execute Installer Packaging
+  // `release/` is generated output. Clear only known Electron Builder outputs so
+  // renamed artifacts from older builds cannot be mistaken for this release.
+  fs.mkdirSync(RELEASE_DIR, { recursive: true });
+  for (const entry of fs.readdirSync(RELEASE_DIR, { withFileTypes: true })) {
+    const entryPath = path.join(RELEASE_DIR, entry.name);
+    const isUnpackedBuild = entry.isDirectory() && entry.name === 'win-unpacked';
+    const isBuilderMetadata = entry.isFile() && entry.name === 'builder-debug.yml';
+    const isDistributionArtifact = entry.isFile()
+      && /^OmniFlow(?: Studio)?(?:-Studio)?(?:-v?\d| Setup )?.*\.(?:exe|zip|blockmap)$/i.test(entry.name);
+    if (isUnpackedBuild) {
+      fs.rmSync(entryPath, { recursive: true, force: true });
+    } else if (isBuilderMetadata || isDistributionArtifact) {
+      fs.rmSync(entryPath, { force: true });
+    }
+  }
+
   log('PACKAGE', isDryRun ? 'Executing dry-run directory packaging...' : 'Executing Electron installer & zip packaging...');
   if (isDryRun) {
     runCommand('pnpm', ['--filter', '@fm/local-agent', 'exec', 'electron-builder', '--dir'], ROOT_DIR, {
@@ -164,7 +180,7 @@ async function main() {
   }
 
   const entries = fs.readdirSync(RELEASE_DIR);
-  const releaseFiles = entries.filter(f => f.endsWith('.exe') || f.endsWith('.zip') || f.endsWith('.blockmap') || f.endsWith('.yml'));
+  const releaseFiles = entries.filter(f => f.endsWith('.exe') || f.endsWith('.zip'));
 
   if (releaseFiles.length === 0) {
     log('ARTIFACTS', 'Note: No packaged .exe or .zip files found in release directory yet (normal in unpacked dry-run mode).');
