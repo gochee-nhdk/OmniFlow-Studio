@@ -9,8 +9,8 @@ import { execSync } from 'child_process';
 export type BrowserProfile = 'SAP' | 'POS';
 export type BrowserSessionMode = 'not-started' | 'dedicated' | 'attached';
 
-function getProfileBase(userDataDir?: string): string {
-  const appData = userDataDir || process.env['APPDATA'] || process.env['HOME'] || '.';
+export function getProfileBase(userDataDir?: string): string {
+  const appData = userDataDir || process.env['APP_DATA_DIR'] || process.env['PORTABLE_DATA_DIR'] || process.env['APPDATA'] || process.env['HOME'] || '.';
   return join(appData, 'browser-profiles');
 }
 

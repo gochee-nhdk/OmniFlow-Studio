@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SecureStorage, LogRedactor } from '../dist/index.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { SecureStorage, LogRedactor, getOrGenerateMasterKeySync, getSecurityDir, getMasterKeyPath } from '../dist/index.js';
 
 test.describe('Package @fm/security - Unit Tests', () => {
   test('SecureStorage: encrypt produces 3-segment base64 format', () => {
@@ -161,5 +164,83 @@ test.describe('Package @fm/security - Unit Tests', () => {
     assert.ok(!redacted.includes('ArrayPass2'));
     assert.ok(!redacted.includes('DeepSecretPassword!'));
     assert.ok(redacted.includes('[REDACTED]'));
+  });
+
+  test('Portable Master Key: respects process.env.FM_OPS_MASTER_KEY when set', () => {
+    const prev = process.env.FM_OPS_MASTER_KEY;
+    try {
+      const customKey = 'test-custom-master-key-32-chars-long!';
+      process.env.FM_OPS_MASTER_KEY = customKey;
+      assert.equal(getOrGenerateMasterKeySync(), customKey);
+      assert.equal(getMasterKeyPath(), ':env:');
+    } finally {
+      if (prev !== undefined) process.env.FM_OPS_MASTER_KEY = prev;
+      else delete process.env.FM_OPS_MASTER_KEY;
+    }
+  });
+
+  test('Portable Master Key: creates and loads master.key in APP_DATA_DIR/security', () => {
+    const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fm-port-test-'));
+    const prevEnv = process.env.FM_OPS_MASTER_KEY;
+    const prevApp = process.env.APP_DATA_DIR;
+    delete process.env.FM_OPS_MASTER_KEY;
+    process.env.APP_DATA_DIR = tmpDataDir;
+
+    try {
+      const expectedDir = path.join(tmpDataDir, 'security');
+      const expectedKeyFile = path.join(expectedDir, 'master.key');
+
+      assert.equal(getSecurityDir(), expectedDir);
+      assert.equal(getMasterKeyPath(), expectedKeyFile);
+
+      // Generate key in portable security dir
+      const key1 = getOrGenerateMasterKeySync();
+      assert.ok(key1.length >= 32, 'Master key must be at least 32 chars');
+      assert.ok(fs.existsSync(expectedKeyFile), 'master.key file must exist in portable security folder');
+
+      const savedContent = fs.readFileSync(expectedKeyFile, 'utf8').trim();
+      assert.equal(savedContent, key1);
+
+      // Subsequent call reuses existing key
+      const key2 = getOrGenerateMasterKeySync();
+      assert.equal(key2, key1);
+
+      // Roundtrip encryption works seamlessly with portable key
+      const encrypted = SecureStorage.encrypt('PortableData2026!');
+      const decrypted = SecureStorage.decrypt(encrypted);
+      assert.equal(decrypted, 'PortableData2026!');
+    } finally {
+      if (prevEnv !== undefined) process.env.FM_OPS_MASTER_KEY = prevEnv;
+      else delete process.env.FM_OPS_MASTER_KEY;
+      if (prevApp !== undefined) process.env.APP_DATA_DIR = prevApp;
+      else delete process.env.APP_DATA_DIR;
+      fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    }
+  });
+
+  test('Portable Master Key: PORTABLE_DATA_DIR resolution', () => {
+    const tmpDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fm-port2-test-'));
+    const prevEnv = process.env.FM_OPS_MASTER_KEY;
+    const prevApp = process.env.APP_DATA_DIR;
+    const prevPort = process.env.PORTABLE_DATA_DIR;
+    delete process.env.FM_OPS_MASTER_KEY;
+    delete process.env.APP_DATA_DIR;
+    process.env.PORTABLE_DATA_DIR = tmpDataDir;
+
+    try {
+      const expectedDir = path.join(tmpDataDir, 'security');
+      assert.equal(getSecurityDir(), expectedDir);
+      const key = getOrGenerateMasterKeySync();
+      assert.ok(key.length >= 32);
+      assert.ok(fs.existsSync(path.join(expectedDir, 'master.key')));
+    } finally {
+      if (prevEnv !== undefined) process.env.FM_OPS_MASTER_KEY = prevEnv;
+      else delete process.env.FM_OPS_MASTER_KEY;
+      if (prevApp !== undefined) process.env.APP_DATA_DIR = prevApp;
+      else delete process.env.APP_DATA_DIR;
+      if (prevPort !== undefined) process.env.PORTABLE_DATA_DIR = prevPort;
+      else delete process.env.PORTABLE_DATA_DIR;
+      fs.rmSync(tmpDataDir, { recursive: true, force: true });
+    }
   });
 });

@@ -9,6 +9,11 @@ import { BrowserManager } from '@fm/browser-engine';
 import os from 'os';
 import path from 'path';
 
+export function getDefaultReportsDir(reportSubDir?: string): string {
+  const baseDir = process.env.PORTABLE_EXECUTABLE_DIR || process.env.APP_DATA_DIR || process.cwd();
+  return reportSubDir ? path.join(baseDir, 'reports', reportSubDir) : path.join(baseDir, 'reports');
+}
+
 export type StepCallback = (stepName: string, status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED', error?: string) => void;
 
 export interface WorkflowOptions {
@@ -73,11 +78,12 @@ export class DailyProcurementRunner {
           toDate = toDate || calculated.to;
         }
         
+        const salesOutputDir = opts.salesOutputDir || getDefaultReportsDir('Sales');
         const salesResult = await pos.downloadSalesTransactionDetail({
           fromDate,
           toDate,
           storeFilter: opts.storeFilter || 'All',
-          outputDir: opts.salesOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Sales'),
+          outputDir: salesOutputDir,
           fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
         });
 
@@ -89,7 +95,7 @@ export class DailyProcurementRunner {
         const fileManager = new DownloadFileManager();
         const finalPath = fileManager.moveAndRename(
           salesResult.tempFilePath,
-          opts.salesOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Sales'),
+          salesOutputDir,
           salesResult.suggestedFilename
         );
 
@@ -124,11 +130,12 @@ export class DailyProcurementRunner {
       const step3 = this.db.createWorkflowStep(run.id, 'Download Inventory Report', 3);
       try {
         const pos = new POSAdapter(this.browserManager, opts.posUrl);
+        const inventoryOutputDir = opts.inventoryOutputDir || getDefaultReportsDir('Inventory');
         const invResult = await pos.downloadInventoryOnhand({
           storeFilter: opts.storeFilter || 'All',
           slocFilter: opts.slocFilter,
           itemFilter: opts.itemFilter,
-          outputDir: opts.inventoryOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Inventory'),
+          outputDir: inventoryOutputDir,
           fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_{YYYY-MM-DD}.xlsx',
         });
 
@@ -137,7 +144,7 @@ export class DailyProcurementRunner {
         const fileManager = new DownloadFileManager();
         const finalPath = fileManager.moveAndRename(
           invResult.tempFilePath,
-          opts.inventoryOutputDir || path.join(os.homedir(), 'Documents', 'OmniFlow_Reports', 'Inventory'),
+          inventoryOutputDir,
           invResult.suggestedFilename
         );
 

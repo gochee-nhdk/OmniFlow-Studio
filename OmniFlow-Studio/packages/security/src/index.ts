@@ -17,16 +17,68 @@ const keytar = require('keytar') as typeof import('keytar');
 const SERVICE_NAME = 'FM-AUTO-OPS';
 
 /**
- * Resolve or dynamically generate a 256-bit machine-specific master key.
- * Stores in a per-OS-user key file so local database credentials are not portable across users.
+ * Resolve the security directory for master key storage.
+ * Prioritizes portable directories (APP_DATA_DIR, PORTABLE_DATA_DIR, ./data)
+ * before falling back to per-user directory os.homedir()/.fm-auto-ops.
  */
-function getOrGenerateMasterKeySync(): string {
+export function getSecurityDir(): string {
+  if (process.env.APP_DATA_DIR) {
+    const appData = process.env.APP_DATA_DIR;
+    return path.basename(appData).toLowerCase() === 'security'
+      ? appData
+      : path.join(appData, 'security');
+  }
+
+  if (process.env.PORTABLE_DATA_DIR) {
+    const portData = process.env.PORTABLE_DATA_DIR;
+    return path.basename(portData).toLowerCase() === 'security'
+      ? portData
+      : path.join(portData, 'security');
+  }
+
+  if (process.env.OMNIFLOW_PORTABLE_DATA) {
+    const omniData = process.env.OMNIFLOW_PORTABLE_DATA;
+    return path.basename(omniData).toLowerCase() === 'security'
+      ? omniData
+      : path.join(omniData, 'security');
+  }
+
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    const exeDataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
+    if (fs.existsSync(exeDataDir)) {
+      return path.join(exeDataDir, 'security');
+    }
+  }
+
+  const localDataDir = path.join(process.cwd(), 'data');
+  if (fs.existsSync(localDataDir)) {
+    return path.join(localDataDir, 'security');
+  }
+
+  return path.join(os.homedir(), '.fm-auto-ops');
+}
+
+/**
+ * Return the path to the resolved master key file (or ':env:' if FM_OPS_MASTER_KEY is set).
+ */
+export function getMasterKeyPath(): string {
+  if (process.env.FM_OPS_MASTER_KEY) {
+    return ':env:';
+  }
+  return path.join(getSecurityDir(), 'master.key');
+}
+
+/**
+ * Resolve or dynamically generate a 256-bit machine/portable master key.
+ * Stores master.key inside portable security folder or per-OS-user directory.
+ */
+export function getOrGenerateMasterKeySync(): string {
   if (process.env.FM_OPS_MASTER_KEY) {
     return process.env.FM_OPS_MASTER_KEY;
   }
 
-  // 1. Check local secure key file in user directory
-  const keyDir = path.join(os.homedir(), '.fm-auto-ops');
+  // 1. Check secure key file in portable security or user directory
+  const keyDir = getSecurityDir();
   const keyFile = path.join(keyDir, 'master.key');
 
   try {
@@ -56,7 +108,7 @@ function getOrGenerateMasterKeySync(): string {
     throw new Error(`Secure credential storage is unavailable: ${(error as Error).message}`);
   }
 
-  // The per-user key file is the synchronous fallback used by SecureStorage.
+  // The key file is the synchronous fallback used by SecureStorage.
 }
 
 export const SECURE_STORAGE_ALGORITHM = 'aes-256-gcm';
@@ -76,10 +128,14 @@ export interface StoredCredential {
  * Payload format: "iv:authTag:ciphertext" (base64 encoded segments)
  */
 export class SecureStorage {
-  private readonly masterKey: string;
+  private readonly customMasterKey?: string;
 
   constructor(masterKey?: string) {
-    this.masterKey = masterKey ?? getOrGenerateMasterKeySync();
+    this.customMasterKey = masterKey;
+  }
+
+  get masterKey(): string {
+    return this.customMasterKey ?? getOrGenerateMasterKeySync();
   }
 
   /**

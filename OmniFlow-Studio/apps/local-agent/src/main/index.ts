@@ -1,12 +1,52 @@
 import { app, BrowserWindow } from 'electron';
-import { join } from 'path';
+import { join, resolve, dirname } from 'path';
 import { mkdirSync, appendFileSync, existsSync } from 'fs';
 import { LogRedactor } from '@fm/security';
 import { registerAll, shutdownAutomationBrowser } from './ipc/index';
 
+// 1. Detect portable data root directory (check process.env.PORTABLE_EXECUTABLE_DIR, process.env.OMNIFLOW_PORTABLE_DATA, or fallback to local ./data in app directory / exe directory)
+function detectPortableDataDir(): string {
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    return join(resolve(process.env.PORTABLE_EXECUTABLE_DIR), 'data');
+  }
+  if (process.env.OMNIFLOW_PORTABLE_DATA) {
+    return resolve(process.env.OMNIFLOW_PORTABLE_DATA);
+  }
+  if (process.env.APP_DATA_DIR) {
+    return resolve(process.env.APP_DATA_DIR);
+  }
+  if (process.env.PORTABLE_DATA_DIR) {
+    return resolve(process.env.PORTABLE_DATA_DIR);
+  }
+  const appOrExeDir = app.isPackaged
+    ? dirname(process.execPath)
+    : process.cwd();
+  return join(appOrExeDir, 'data');
+}
+
+const portableDataDir = detectPortableDataDir();
+
+// Ensure portable root directory exists early
+try {
+  mkdirSync(portableDataDir, { recursive: true });
+} catch {
+  // Directory may already exist
+}
+
+// 2. Call app.setPath('userData', portableDataDir) before app.whenReady() so all Chromium, Electron, cookies, caches, IndexedDB, etc. live in ./data.
+try {
+  app.setPath('userData', portableDataDir);
+} catch {
+  // Ignore if unable to set path
+}
+
+// 3. Expose process.env.APP_DATA_DIR = portableDataDir
+process.env.APP_DATA_DIR = portableDataDir;
+process.env.PORTABLE_DATA_DIR = portableDataDir;
+
 function log(msg: string): void {
   try {
-    const logDir = join(app.getPath('userData'), 'logs');
+    const logDir = join(portableDataDir, 'logs');
     const logFile = join(logDir, 'electron-main.log');
     mkdirSync(logDir, { recursive: true });
     const redacted = LogRedactor.redact(msg);
@@ -25,6 +65,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 log('Electron main process starting up');
+log(`Portable data directory configured at: ${portableDataDir}`);
 
 let isBrowserShutdownComplete = false;
 let isBrowserShutdownInProgress = false;
@@ -46,12 +87,23 @@ if (!gotTheLock) {
 }
 
 let mainWindow: BrowserWindow | null = null;
-const DATA_DIR = join(app.getPath('userData'), 'fm-auto-ops');
-const DB_PATH = join(DATA_DIR, 'fmauto.sqlite');
+// 4. Ensure DATA_DIR, DB_PATH (fmauto.sqlite), logDir, Temp downloadDir, and userDataDir all reside inside portableDataDir.
+const DATA_DIR = existsSync(join(portableDataDir, 'fm-auto-ops', 'fmauto.sqlite'))
+  ? join(portableDataDir, 'fm-auto-ops')
+  : portableDataDir;
+const DB_PATH = existsSync(join(portableDataDir, 'fm-auto-ops', 'fmauto.sqlite'))
+  ? join(portableDataDir, 'fm-auto-ops', 'fmauto.sqlite')
+  : join(portableDataDir, 'fmauto.sqlite');
 
 function ensureDataDir(): void {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(portableDataDir, { recursive: true });
+  if (DATA_DIR !== portableDataDir) {
+    mkdirSync(DATA_DIR, { recursive: true });
+  }
+  mkdirSync(join(portableDataDir, 'logs'), { recursive: true });
+  mkdirSync(join(portableDataDir, 'Temp'), { recursive: true });
   log(`Data directory ensured: ${DATA_DIR}`);
+  log(`Database path: ${DB_PATH}`);
 }
 
 function createWindow(): void {

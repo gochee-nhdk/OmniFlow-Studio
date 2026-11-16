@@ -2,7 +2,7 @@
     "name":  "@fm/local-agent",
     "productName":  "OmniFlow Studio",
     "version":  "1.0.0",
-    "description":  "OmniFlow Studio — Enterprise ERP \u0026 POS Automation Platform",
+    "description":  "OmniFlow Studio — Enterprise ERP & POS Automation Platform",
     "author":  "OmniFlow Studio",
     "private":  true,
     "type":  "commonjs",
@@ -10,7 +10,7 @@
     "scripts":  {
                     "dev":  "electron src/main/index.ts",
                     "build":  "tsc",
-                    "build:installer":  "npm run build \u0026\u0026 electron-builder",
+                    "build:installer":  "npm run build && electron-builder",
                     "typecheck":  "tsc --noEmit",
                     "test":  "node --test",
                     "start":  "electron dist/main/index.js"
@@ -44,7 +44,8 @@
                   "win":  {
                               "target":  [
                                              "nsis",
-                                             "zip"
+                                             "zip",
+                                             "portable"
                                          ],
                               "icon":  "../../assets/app-icon.ico"
                           },
@@ -52,7 +53,10 @@
                                "oneClick":  false,
                                "allowToChangeInstallationDirectory":  true,
                                "createDesktopShortcut":  true
-                           }
+                           },
+                  "portable":  {
+                                   "artifactName": "OmniFlow-Studio-v${version}-windows-portable.${ext}"
+                               }
               },
     "dependencies":  {
                          "@fm/browser-engine":  "workspace:*",

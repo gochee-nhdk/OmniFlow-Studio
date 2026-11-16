@@ -71,19 +71,60 @@ function runCommand(command, cmdArgs, cwd = ROOT_DIR, env = process.env) {
   }
 }
 
-function computeSha256(filePath) {
+export function computeSha256(filePath) {
   const fileBuffer = fs.readFileSync(filePath);
   const hashSum = crypto.createHash('sha256');
   hashSum.update(fileBuffer);
   return hashSum.digest('hex');
 }
 
-function formatBytes(bytes) {
+export function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
+
+/**
+ * Validates electron-builder Windows targets, permitting and detecting 'portable'.
+ */
+export function validateTargets(targets) {
+  const targetList = Array.isArray(targets) ? targets : (targets ? [targets] : []);
+  const targetNames = targetList.map(t => (typeof t === 'string' ? t.toLowerCase() : (t && t.target ? t.target.toLowerCase() : '')));
+  const hasNsis = targetNames.includes('nsis');
+  const hasZip = targetNames.includes('zip');
+  const hasPortable = targetNames.includes('portable');
+  const valid = hasNsis && hasZip;
+  return { valid, hasNsis, hasZip, hasPortable, targetNames };
+}
+
+/**
+ * Scans release directory and categorizes distribution artifacts (NSIS installer, portable exe, portable zip).
+ */
+export function detectArtifacts(dirPath) {
+  if (!fs.existsSync(dirPath)) return [];
+  const entries = fs.readdirSync(dirPath);
+  return entries
+    .filter(f => f.endsWith('.exe') || f.endsWith('.zip'))
+    .map(name => {
+      const fullPath = path.join(dirPath, name);
+      const stat = fs.statSync(fullPath);
+      const isPortable = name.toLowerCase().includes('portable') || name.endsWith('.zip');
+      const type = name.endsWith('.zip')
+        ? 'portable-zip'
+        : name.toLowerCase().includes('portable')
+          ? 'portable-exe'
+          : 'nsis-installer';
+      return {
+        name,
+        fullPath,
+        size: stat.size,
+        type,
+        isPortable,
+        sha256: computeSha256(fullPath),
+      };
+    });
 }
 
 async function main() {
@@ -113,11 +154,12 @@ async function main() {
   const agentPkg = JSON.parse(fs.readFileSync(agentPkgPath, 'utf8'));
   const buildConfig = agentPkg.build || {};
   const targets = (buildConfig.win && buildConfig.win.target) || [];
+  const targetValidation = validateTargets(targets);
 
-  if (!targets.includes('nsis') || !targets.includes('zip')) {
+  if (!targetValidation.hasNsis || !targetValidation.hasZip) {
     throw new Error(`apps/local-agent package.json win.target must include both 'nsis' and 'zip'. Current: ${JSON.stringify(targets)}`);
   }
-  log('PREFLIGHT', `Builder targets: ${JSON.stringify(targets)} (OK)`);
+  log('PREFLIGHT', `Builder targets: ${JSON.stringify(targetValidation.targetNames)} (nsis: OK, zip: OK, portable: ${targetValidation.hasPortable ? 'ENABLED' : 'OPTIONAL'})`);
 
   const extraResources = buildConfig.extraResources || [];
   const bundlesWeb = extraResources.some(r => r.from && r.from.includes('web') && r.to && r.to.includes('web'));
@@ -179,31 +221,37 @@ async function main() {
     fs.mkdirSync(RELEASE_DIR, { recursive: true });
   }
 
-  const entries = fs.readdirSync(RELEASE_DIR);
-  const releaseFiles = entries.filter(f => f.endsWith('.exe') || f.endsWith('.zip'));
+  const artifacts = detectArtifacts(RELEASE_DIR);
+  const portableCount = artifacts.filter(a => a.isPortable).length;
+  const installerCount = artifacts.filter(a => a.type === 'nsis-installer').length;
 
-  if (releaseFiles.length === 0) {
+  if (artifacts.length === 0) {
     log('ARTIFACTS', 'Note: No packaged .exe or .zip files found in release directory yet (normal in unpacked dry-run mode).');
   } else {
+    log('ARTIFACTS', `Detected ${artifacts.length} release artifact(s) (${portableCount} portable, ${installerCount} installer).`);
     console.log('\nGenerated Release Artifacts:');
-    console.log('--------------------------------------------------------------------------------------------------------');
-    console.log('File Name                                       | Size         | SHA-256');
-    console.log('--------------------------------------------------------------------------------------------------------');
-    for (const f of releaseFiles) {
-      const fullPath = path.join(RELEASE_DIR, f);
-      const stat = fs.statSync(fullPath);
-      if (stat.isFile()) {
-        const hash = computeSha256(fullPath).substring(0, 16) + '...';
-        console.log(`${f.padEnd(47)} | ${formatBytes(stat.size).padEnd(12)} | ${hash}`);
-      }
+    console.log('-------------------------------------------------------------------------------------------------------------------');
+    console.log('File Name                                       | Type          | Size         | SHA-256');
+    console.log('-------------------------------------------------------------------------------------------------------------------');
+    for (const a of artifacts) {
+      const hash = a.sha256.substring(0, 16) + '...';
+      const typeLabel = a.type === 'portable-exe'
+        ? 'Portable EXE'
+        : a.type === 'portable-zip'
+          ? 'Portable ZIP'
+          : 'NSIS Installer';
+      console.log(`${a.name.padEnd(47)} | ${typeLabel.padEnd(13)} | ${formatBytes(a.size).padEnd(12)} | ${hash}`);
     }
-    console.log('--------------------------------------------------------------------------------------------------------\n');
+    console.log('-------------------------------------------------------------------------------------------------------------------\n');
   }
 
   log('SUCCESS', 'Release automation workflow completed successfully!');
 }
 
-main().catch(err => {
-  console.error('\n[FATAL ERROR]', err.message);
-  process.exit(1);
-});
+const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+if (isDirectExecution) {
+  main().catch(err => {
+    console.error('\n[FATAL ERROR]', err.message);
+    process.exit(1);
+  });
+}

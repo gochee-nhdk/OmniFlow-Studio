@@ -29,6 +29,7 @@ interface LocalAppConfig {
 
 function loadLocalAppConfig(): LocalAppConfig {
   const possiblePaths = [
+    ...(process.env.APP_DATA_DIR ? [path.join(process.env.APP_DATA_DIR, 'app-config.local.json')] : []),
     path.join(process.cwd(), 'app-config.local.json'),
     path.join(process.cwd(), 'OmniFlow-Studio', 'app-config.local.json'),
     path.join(__dirname, '..', '..', '..', '..', 'app-config.local.json'),
@@ -42,6 +43,11 @@ function loadLocalAppConfig(): LocalAppConfig {
     } catch {}
   }
   return {};
+}
+
+function getDefaultReportsDir(subDir: string): string {
+  const baseDir = process.env.PORTABLE_EXECUTABLE_DIR || process.env.APP_DATA_DIR || process.cwd();
+  return subDir ? path.join(baseDir, 'reports', subDir) : path.join(baseDir, 'reports');
 }
 
 const localConfig = loadLocalAppConfig();
@@ -64,11 +70,25 @@ function encryptLocalCredential(password: string): string {
 
 function decryptLocalCredential(stored: string): string {
   if (stored.startsWith(SAFE_STORAGE_CREDENTIAL_PREFIX)) {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('Windows credential encryption is unavailable in this session.');
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
+        const encrypted = Buffer.from(stored.slice(SAFE_STORAGE_CREDENTIAL_PREFIX.length), 'base64');
+        return safeStorage.decryptString(encrypted);
+      } catch {
+        // Fall back to SecureStorage if DPAPI fails (e.g. when app folder is moved to another Windows machine)
+        try {
+          return SecureStorage.decrypt(stored.slice(SAFE_STORAGE_CREDENTIAL_PREFIX.length));
+        } catch {
+          return SecureStorage.decrypt(stored);
+        }
+      }
     }
-    const encrypted = Buffer.from(stored.slice(SAFE_STORAGE_CREDENTIAL_PREFIX.length), 'base64');
-    return safeStorage.decryptString(encrypted);
+    // If safeStorage is not available in this session, fall back to SecureStorage
+    try {
+      return SecureStorage.decrypt(stored.slice(SAFE_STORAGE_CREDENTIAL_PREFIX.length));
+    } catch {
+      return SecureStorage.decrypt(stored);
+    }
   }
   // Backward compatibility for encrypted credentials saved by older app versions.
   return SecureStorage.decrypt(stored);
@@ -76,9 +96,15 @@ function decryptLocalCredential(stored: string): string {
 
 export function registerAll(dbPath: string): void {
   db = new FMDatabase(dbPath);
+  const portableDataDir = process.env.APP_DATA_DIR || app.getPath('userData');
+  const tempDownloadDir = path.join(portableDataDir, 'Temp');
+  try {
+    fs.mkdirSync(tempDownloadDir, { recursive: true });
+  } catch {}
+
   browserManager = new BrowserManager({
-    downloadDir: path.join(app.getPath('userData'), 'Temp'),
-    userDataDir: app.getPath('userData'),
+    downloadDir: tempDownloadDir,
+    userDataDir: portableDataDir,
     headless: false,
     allowCdpAttach: true,
     cdpPorts: [9222, 9223, 9229],
@@ -374,7 +400,7 @@ function registerWorkflowHandlers(): void {
             const fromD = opts.fromDate || dateRange.from;
             const toD = opts.toDate || dateRange.to;
             const storeF = opts.storeFilter || 'All';
-            const targetSalesDir = opts.salesOutputDir || opts.outputDir || path.join(app.getPath('documents'), 'OmniFlow_Reports', 'Sales');
+            const targetSalesDir = opts.salesOutputDir || opts.outputDir || getDefaultReportsDir('Sales');
 
             broadcastStep(`POS: Tải Sales Detail (${fromD} → ${toD})`, 'RUNNING', 2);
             const result = await posAdapter.downloadSalesTransactionDetail({
@@ -420,7 +446,7 @@ function registerWorkflowHandlers(): void {
             assertNotStopped();
             const stepInv = db.createWorkflowStep(run.id, 'POS: Download Inventory Onhand', 3);
             const invStore = opts.inventoryStoreFilter || 'All';
-            const targetInvDir = opts.inventoryOutputDir || opts.outputDir || path.join(app.getPath('documents'), 'OmniFlow_Reports', 'Inventory');
+            const targetInvDir = opts.inventoryOutputDir || opts.outputDir || getDefaultReportsDir('Inventory');
             broadcastStep(`POS: Tải Inventory Onhand (Kho: ${invStore})`, 'RUNNING', 3);
             try {
               const invResult = await posAdapter.downloadInventoryOnhand({
@@ -895,13 +921,16 @@ function registerNetworkHandlers(): void {
 }
 
 function registerFileHandlers(): void {
-  ipcMain.handle('app:get-paths', async () => ({
-    documents: app.getPath('documents'),
-    downloads: app.getPath('downloads'),
-    userData: app.getPath('userData'),
-    temp: app.getPath('temp'),
-    logs: path.join(app.getPath('userData'), 'logs'),
-  }));
+  ipcMain.handle('app:get-paths', async () => {
+    const userData = process.env.APP_DATA_DIR || app.getPath('userData');
+    return {
+      documents: app.getPath('documents'),
+      downloads: app.getPath('downloads'),
+      userData,
+      temp: path.join(userData, 'Temp'),
+      logs: path.join(userData, 'logs'),
+    };
+  });
 
   ipcMain.handle('dialog:open-directory', async (_event, defaultPath?: string) => {
     const result = await dialog.showOpenDialog({

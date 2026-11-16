@@ -115,12 +115,20 @@ namespace OmniFlowStudio
                     return;
                 }
 
+                // Set portable environment variables for child processes
+                string portableDir = Path.GetFullPath(appDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                Environment.SetEnvironmentVariable("OMNIFLOW_PORTABLE", "true");
+                Environment.SetEnvironmentVariable("PORTABLE_EXECUTABLE_DIR", portableDir);
+
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = electronExe;
                 psi.Arguments = "\"" + mainJs + "\"";
                 psi.WorkingDirectory = localAgentDir;
-                psi.UseShellExecute = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = false;
                 psi.WindowStyle = ProcessWindowStyle.Normal;
+                psi.EnvironmentVariables["OMNIFLOW_PORTABLE"] = "true";
+                psi.EnvironmentVariables["PORTABLE_EXECUTABLE_DIR"] = portableDir;
 
                 Process.Start(psi);
             }
