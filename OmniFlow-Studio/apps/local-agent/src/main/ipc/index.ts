@@ -2,7 +2,7 @@ import { app, ipcMain, shell, dialog, safeStorage } from 'electron';
 import { FMDatabase } from '@fm/database';
 import { credentialManager, SecureStorage } from '@fm/security';
 import { BrowserManager } from '@fm/browser-engine';
-import { POSAdapter } from '@fm/pos-adapter';
+import { POSAdapter, parseFilterValues } from '@fm/pos-adapter';
 import { SAPAdapter } from '@fm/sap-adapter';
 import { ExcelValidator, DownloadFileManager } from '@fm/file-engine';
 import http from 'http';
@@ -252,8 +252,16 @@ function registerWorkflowHandlers(): void {
       ...savedSettings,
       fromDate: savedSettings.posSalesFromDate,
       toDate: savedSettings.posSalesToDate,
-      storeFilter: Array.isArray(savedSettings.posSelectedSalesStores) ? savedSettings.posSelectedSalesStores.join(',') : undefined,
-      inventorySlocFilter: Array.isArray(savedSettings.posSelectedInvSlocs) ? savedSettings.posSelectedInvSlocs.join(',') : undefined,
+      storeFilter: savedSettings.posSalesStoreFilterEnabled === false
+        ? 'All'
+        : [...new Set([
+            ...(Array.isArray(savedSettings.posSelectedSalesStores) ? savedSettings.posSelectedSalesStores : []),
+            ...parseFilterValues(savedSettings.posCustomSlocInput),
+          ])].join(',') || 'All',
+      inventorySlocFilter: [...new Set([
+        ...(Array.isArray(savedSettings.posSelectedInvSlocs) ? savedSettings.posSelectedInvSlocs : []),
+        ...parseFilterValues(savedSettings.posCustomSlocInput),
+      ])].join(','),
       inventoryItemFilter: savedSettings.posInvItem,
       salesOutputDir: savedSettings.posSalesDir || (activeProfile?.exportPath ? path.join(activeProfile.exportPath, 'Sales') : undefined),
       salesFileNameTemplate: savedSettings.posSalesFileName || activeProfile?.namingTemplate,

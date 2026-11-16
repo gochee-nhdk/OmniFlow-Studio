@@ -107,135 +107,81 @@ export class SAPAdapter {
   private async navigateToTargetModule(page: any, targetModule: SAPLoginOptions['targetModule'], onProgress?: (msg: string) => void): Promise<void> {
     await page.bringToFront?.().catch?.(() => null);
     if (!targetModule || targetModule === 'HOME') return;
+    await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
+    await page.waitForSelector('.sapMShellTitle, #shell-header, .sapUshellShellHead, nav[role="navigation"]', { timeout: 10000 }).catch(() => null);
 
-    // Wait for shell to stabilize after login
-    try {
-      await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
-      await page.waitForSelector(
-        '.sapMShellTitle, #shell-header, .sapUshellShellHead, .sapUiUx3NavBar, nav[role="navigation"]',
-        { timeout: 10000 }
-      ).catch(() => null);
-    } catch { /* continue anyway */ }
-
-    // Module labels: [EN primary, EN alt, VI]
-    const moduleLabels: Record<string, string[][]> = {
-      PURCHASING_PO: [
-        ['Purchase Orders', 'Purchase Order', 'Đơn mua hàng'],
-      ],
-      PURCHASING_GRPO: [
-        ['Goods Receipt PO', 'Nhập hàng từ PO'],
-      ],
-      PURCHASING_RETURN: [
-        ['Goods Return', 'Goods Returns', 'Trả hàng mua'],
-      ],
-      INVENTORY_STATUS: [
-        ['Inventory Status', 'Items'],
-      ],
+    const config: Record<string, { parents: string[]; labels: string[]; readable: string }> = {
+      PURCHASING_PO: { parents: ['Purchasing - A/P', 'Mua hàng - A/P', 'Purchasing', 'Phân hệ Mua hàng'], labels: ['Purchase Order', 'Purchase Orders', 'Create Purchase Order', 'Đơn đặt hàng mua', 'Đơn mua hàng'], readable: 'Đặt hàng (Purchase Order)' },
+      PURCHASING_GRPO: { parents: ['Purchasing - A/P', 'Mua hàng - A/P', 'Purchasing'], labels: ['Goods Receipt PO', 'Goods Receipt POs', 'Nhập hàng từ PO', 'Phiếu nhập kho mua hàng'], readable: 'Nhập kho (Goods Receipt PO)' },
+      PURCHASING_RETURN: { parents: ['Purchasing - A/P', 'Mua hàng - A/P', 'Purchasing'], labels: ['Goods Return', 'Goods Returns', 'Goods Return Request', 'Trả hàng mua', 'Xuất trả hàng nhà cung cấp'], readable: 'Xuất trả hàng (Goods Return)' },
+      INVENTORY_STATUS: { parents: ['Inventory', 'Kho hàng', 'Tồn kho', 'Purchasing - A/P'], labels: ['Inventory Status', 'Inventory Reports', 'Items', 'Item Master Data', 'Báo cáo tồn kho', 'Danh mục hàng hóa'], readable: 'Kiểm tra tồn kho (Inventory Status)' },
     };
+    const target = config[targetModule];
+    if (!target) return;
 
-    const moduleReadable: Record<string, string> = {
-      PURCHASING_PO: 'Đơn mua hàng (Purchase Orders)',
-      PURCHASING_GRPO: 'Nhập hàng từ PO (Goods Receipt PO)',
-      PURCHASING_RETURN: 'Trả hàng mua (Goods Return)',
-      INVENTORY_STATUS: 'Báo cáo tồn kho (Inventory Status)',
-    };
-
-    // ── Method 1: Left Menu Tree ──────────────────────────────────────────────
-    let navigated = false;
-    try {
-      // Find and click parent menu group
-      const parentMenuLabels = ['Purchasing - A/P', 'Mua hàng - A/P'];
-      if (targetModule === 'INVENTORY_STATUS') {
-        parentMenuLabels.unshift('Inventory', 'Kho');
-      }
-
-      let parentClicked = false;
-      for (const parentLabel of parentMenuLabels) {
-        const parentItem = page.locator(`:text("${parentLabel}")`).first();
-        if (await parentItem.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await parentItem.click().catch(() => null);
-          await page.waitForTimeout(500);
-          parentClicked = true;
-          break;
+    const clickLabel = async (label: string, selectors: string[] = []): Promise<boolean> => {
+      const exactSelectors = [
+        `.sapMGT:has-text("${label}")`, `.sapUshellTile:has-text("${label}")`,
+        `a:has-text("${label}")`, `button:has-text("${label}")`,
+        `[role="treeitem"]:has-text("${label}")`, `:text-is("${label}")`, `:text("${label}")`,
+      ];
+      for (const selector of [...selectors, ...exactSelectors]) {
+        const locator = page.locator(selector).first();
+        if (await locator.isVisible({ timeout: 1200 }).catch(() => false)) {
+          try {
+            await locator.click({ timeout: 2500 });
+            await page.waitForTimeout(700);
+            return true;
+          } catch { /* try the next matching element */ }
         }
       }
+      return false;
+    };
 
-      if (parentClicked) {
-        // For Inventory Status — may need to expand sub-group
-        if (targetModule === 'INVENTORY_STATUS') {
-          const subGroupLabels = ['Inventory Reports', 'Báo cáo tồn kho'];
-          for (const sg of subGroupLabels) {
-            const sgItem = page.locator(`:text("${sg}")`).first();
-            if (await sgItem.isVisible({ timeout: 2000 }).catch(() => false)) {
-              await sgItem.click().catch(() => null);
-              await page.waitForTimeout(400);
+    let navigated = false;
+    // Prefer an already-visible Fiori tile or menu entry.
+    for (const label of target.labels) {
+      if (await clickLabel(label)) {
+        navigated = true;
+        break;
+      }
+    }
+
+    // Expand the appropriate application menu and find its child entry.
+    if (!navigated) {
+      for (const parent of target.parents) {
+        if (await clickLabel(parent)) {
+          for (const label of target.labels) {
+          if (await clickLabel(label)) {
+              navigated = true;
               break;
             }
           }
-        }
-
-        // Click the target submenu item
-        const subLabels = (moduleLabels[targetModule] || [[]])[0] || [];
-        for (const label of subLabels) {
-          const item = page.locator(`:text("${label}")`).first();
-          if (await item.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await item.click().catch(() => null);
-            await page.waitForTimeout(800);
-            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
-            navigated = true;
-            break;
-          }
+          if (navigated) break;
         }
       }
-    } catch { /* fall through to Method 2 */ }
-
-    // ── Method 2: Tiles / Quick Search (fallback) ─────────────────────────────
-    if (!navigated) {
-      try {
-        // Try to open the hamburger / menu button first
-        const menuTriggers = [
-          '#shellAppTitle',
-          'button[aria-label*="Menu" i]',
-          '.sapUshellMeAreaHeaderButton',
-          '.sapUshellHeadItm[title*="Menu" i]',
-        ];
-        for (const trigger of menuTriggers) {
-          const btn = page.locator(trigger).first();
-          if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-            await btn.click().catch(() => null);
-            await page.waitForTimeout(500);
-            break;
-          }
-        }
-
-        // Try tiles
-        const tileLabels = (moduleLabels[targetModule] || [[]])[0] || [];
-        for (const label of tileLabels) {
-          // SAP Fiori tiles
-          const tile = page.locator(`.sapMGT:has-text("${label}"), .sapUshellTile:has-text("${label}")`).first();
-          if (await tile.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await tile.click().catch(() => null);
-            await page.waitForTimeout(800);
-            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
-            navigated = true;
-            break;
-          }
-          // Generic text link / list item
-          const textLink = page.locator(`:text("${label}")`).first();
-          if (await textLink.isVisible({ timeout: 1500 }).catch(() => false)) {
-            await textLink.click().catch(() => null);
-            await page.waitForTimeout(800);
-            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
-            navigated = true;
-            break;
-          }
-        }
-      } catch { /* ignore fallback errors */ }
     }
 
+    // SAP Web Client deployments may expose only the shell menu search.
     if (!navigated) {
-      onProgress?.(`Đã đăng nhập SAP; chưa tìm thấy menu ${targetModule} để điều hướng.`);
+      for (const selector of ['input[placeholder*="Search" i]', 'input[placeholder*="Tìm" i]', '#shell-header input', '.sapUshellSearch input']) {
+        const search = page.locator(selector).first();
+        if (!(await search.isVisible({ timeout: 800 }).catch(() => false))) continue;
+        for (const label of target.labels) {
+          try {
+            await search.fill(label);
+            await search.press('Enter');
+            await page.waitForTimeout(900);
+            navigated = true;
+            break;
+          } catch { /* try another target alias */ }
+        }
+        if (navigated) break;
+      }
     }
+
+    if (navigated) onProgress?.(`Đã đăng nhập SAP và mở sẵn phân hệ nghiệp vụ: ${target.readable} trên tab trình duyệt.`);
+    else onProgress?.(`Đã đăng nhập SAP; chưa tìm thấy menu ${targetModule} để điều hướng.`);
   }
 
   /**

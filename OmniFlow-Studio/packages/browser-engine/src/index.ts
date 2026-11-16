@@ -208,9 +208,10 @@ export class BrowserManager {
     return destPath;
   }
 
-  async closeContext(profile: BrowserProfile): Promise<void> {
-    // When attached over CDP, do NOT close the user's tabs — just forget our handle.
-    if (!this.attachedOverCDP) {
+  async closeContext(profile: BrowserProfile, closeTab = false): Promise<void> {
+    // Stop releases task references. Tabs are kept visible unless the caller explicitly
+    // requests closure or this is an isolated headless test context.
+    if (!this.attachedOverCDP && (closeTab || this.headless)) {
       const ownedPage = this.profilePages.get(profile);
       if (ownedPage && !ownedPage.isClosed()) await ownedPage.close().catch(() => null);
     }
@@ -219,8 +220,8 @@ export class BrowserManager {
   }
 
   /** Release tab handles but keep the managed browser/profile ready for the next automation. */
-  async closeAll(): Promise<void> {
-    for (const profile of Array.from(this.contexts.keys())) await this.closeContext(profile);
+  async closeAll(closeTabs = false): Promise<void> {
+    for (const profile of Array.from(this.contexts.keys())) await this.closeContext(profile, closeTabs);
   }
 
   /** Shutdown on app exit. For CDP connections, browser.close() only disconnects the socket —
@@ -231,7 +232,7 @@ export class BrowserManager {
     await this.closeAll();
     this.sharedContext = undefined;
     this.attachedOverCDP = false;
-    if (context && !isAttached) {
+    if (context && !isAttached && this.headless) {
       await context.close().catch(() => null);
     } else if (context && isAttached) {
       // Disconnect CDP socket only — leaves user's browser/tabs alive on screen.

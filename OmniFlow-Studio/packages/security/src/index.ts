@@ -78,8 +78,8 @@ export interface StoredCredential {
 export class SecureStorage {
   private readonly masterKey: string;
 
-  constructor(masterKey: string = SECURE_STORAGE_DEFAULT_MASTER_KEY) {
-    this.masterKey = masterKey;
+  constructor(masterKey?: string) {
+    this.masterKey = masterKey ?? getOrGenerateMasterKeySync();
   }
 
   /**

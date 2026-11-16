@@ -9,7 +9,7 @@
  *  4. github/spec-kit
  *  5. mattpocock/skills
  *  6. Addy Osmani Agent Skills
- *  7. Microsoft Playwright CLI and TestDino / Lackey Playwright skills
+ *  7. Microsoft Playwright CLI and TestDino / Chrome Playwright skills
  *
  * Performs clean vendoring (removes nested .git directories to prevent submodule gitlink collisions),
  * creates tools/manifest.json, configures runtimes, and copies key agent skills into .agents/skills/.
@@ -54,6 +54,13 @@ const REPOSITORIES = [
     url: 'https://github.com/lackeyjb/playwright-skill.git',
     targetDir: join(TOOLS_DIR, 'lackeyjb-playwright-skill'),
     description: 'Playwright automation skill',
+    setupType: 'skills'
+  },
+  {
+    name: 'hankunpeng-skills',
+    url: 'https://github.com/hankunpeng/skills.git',
+    targetDir: join(TOOLS_DIR, 'hankunpeng-skills'),
+    description: 'Playwright skills for using installed Chrome and Edge browsers',
     setupType: 'skills'
   },
   {

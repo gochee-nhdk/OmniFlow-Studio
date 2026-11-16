@@ -11,6 +11,7 @@ const ExcelJS = require('exceljs');
 import { BrowserManager } from '../../packages/browser-engine/dist/index.js';
 import { POSAdapter, enforceExcelFilterIntegrity } from '../../packages/pos-adapter/dist/index.js';
 import { SAPAdapter } from '../../packages/sap-adapter/dist/index.js';
+import { SecureStorage } from '../../packages/security/dist/index.js';
 
 test('Scenario 1: BrowserManager Default CDP Attach and Graceful Tab Preservation', async () => {
   const tmpDir = path.join(os.tmpdir(), `omniflow-r11-cdp-${Date.now()}`);
@@ -41,34 +42,42 @@ test('Scenario 2: Dual-Layer Excel Filter (enforceExcelFilterIntegrity)', async 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniflow-r11-excel-'));
   const filePath = path.join(tmpDir, 'test-pos-export.xlsx');
 
-  // Create mock Excel with header and 5 data rows: DC0101 (2 rows), SFM0101 (1 row), SFM0201 (1 row), SFM0301 (1 row)
+  // Create a real workbook with six rows spanning four Sloc IDs and three SKUs.
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Sheet1');
   sheet.addRow(['Store ID', 'Sloc ID', 'Item Code', 'Item Name', 'Qty']);
-  sheet.addRow(['DC01', 'DC0101', 'B0001', 'Apple', 10]);
-  sheet.addRow(['DC01', 'DC0101', 'B0002', 'Orange', 20]);
-  sheet.addRow(['SFM01', 'SFM0101', 'B0001', 'Apple', 5]);
-  sheet.addRow(['SFM02', 'SFM0201', 'B0003', 'Banana', 15]);
-  sheet.addRow(['SFM03', 'SFM0301', 'B0004', 'Grape', 8]);
+  sheet.addRow(['DC01', 'DC0101', 'SKU-01', 'Apple', 10]);
+  sheet.addRow(['DC01', 'DC0101', 'SKU-02', 'Orange', 20]);
+  sheet.addRow(['DC01', 'DC0101', 'SKU-03', 'Banana', 7]);
+  sheet.addRow(['SFM01', 'SFM0101', 'SKU-01', 'Apple', 5]);
+  sheet.addRow(['SFM02', 'SFM0201', 'SKU-02', 'Orange', 15]);
+  sheet.addRow(['SFM03', 'SFM0301', 'SKU-03', 'Banana', 8]);
   await workbook.xlsx.writeFile(filePath);
 
   // Filter to only DC0101 and SFM0201
-  const res = await enforceExcelFilterIntegrity(filePath, { slocs: ['DC0101', 'SFM0201'] });
+  const res = await enforceExcelFilterIntegrity(filePath, {
+    slocs: ['DC0101', 'SFM0201'],
+    items: ['SKU-01', 'SKU-02'],
+  });
   assert.equal(res.filtered, true);
-  assert.equal(res.rowCount, 3, 'Should retain exactly 3 rows: 2 for DC0101 and 1 for SFM0201');
+  assert.equal(res.modified, true);
+  assert.equal(res.rowCount, 3, 'Should retain three rows matching both the Sloc and SKU filters');
 
   // Verify file content
   const verifiedWb = new ExcelJS.Workbook();
   await verifiedWb.xlsx.readFile(filePath);
   const verifiedSheet = verifiedWb.worksheets[0];
   const retainedSlocs = [];
+  const retainedItems = [];
   verifiedSheet.eachRow((row, idx) => {
     if (idx > 1) {
       retainedSlocs.push(String(row.getCell(2).value));
+      retainedItems.push(String(row.getCell(3).value));
     }
   });
 
   assert.deepEqual(retainedSlocs.sort(), ['DC0101', 'DC0101', 'SFM0201'].sort());
+  assert.deepEqual(retainedItems.sort(), ['SKU-01', 'SKU-02', 'SKU-02'].sort());
   assert.equal(retainedSlocs.includes('SFM0101'), false, 'SFM0101 must be removed');
   assert.equal(retainedSlocs.includes('SFM0301'), false, 'SFM0301 must be removed');
 
@@ -117,7 +126,7 @@ test('Scenario 4: SAP Procurement Navigation Target Modules', async () => {
   });
 
   assert.equal(progressMessages.length > 0, true);
-  assert.equal(progressMessages[0].includes('Purchase Orders'), true);
+  assert.equal(progressMessages[0].includes('Purchase Order'), true);
 
   // Test PURCHASING_RETURN navigation
   progressMessages.length = 0;
@@ -132,6 +141,26 @@ test('Scenario 4: SAP Procurement Navigation Target Modules', async () => {
     progressMessages.push(msg);
   });
   assert.equal(progressMessages[0].includes('Goods Receipt PO'), true);
+
+  progressMessages.length = 0;
+  await sap.navigateToTargetModule(mockPage, 'INVENTORY_STATUS', (msg) => {
+    progressMessages.push(msg);
+  });
+  assert.equal(progressMessages[0].includes('Inventory Status'), true);
+});
+
+test('Scenario 7: SecureStorage instance and static methods use the same dynamic key source', () => {
+  const previousKey = process.env.FM_OPS_MASTER_KEY;
+  process.env.FM_OPS_MASTER_KEY = `r11-${process.pid}-${Date.now()}-dynamic-key`;
+  try {
+    const instance = new SecureStorage();
+    const encrypted = instance.encrypt('instance-secret');
+    assert.equal(instance.decrypt(encrypted), 'instance-secret');
+    assert.throws(() => SecureStorage.decrypt(encrypted, 'FM_OPS_MASTER_KEY'));
+  } finally {
+    if (previousKey === undefined) delete process.env.FM_OPS_MASTER_KEY;
+    else process.env.FM_OPS_MASTER_KEY = previousKey;
+  }
 });
 
 test('Scenario 5: SAP Export to Excel Helper', async () => {

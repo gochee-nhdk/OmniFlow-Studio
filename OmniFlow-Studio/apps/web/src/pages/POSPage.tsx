@@ -92,7 +92,7 @@ export default function POSPage() {
   const invSlocDropdownRef = useRef<HTMLDivElement>(null);
 
   const [invItem, setInvItem] = useState(() => localStorage.getItem('pos_inv_item') || '');
-  const [quickSlocInput, setQuickSlocInput] = useState('');
+  const [quickSlocInput, setQuickSlocInput] = useState(() => localStorage.getItem('pos_custom_sloc_input') || '');
   const preferencesLoadedRef = useRef(false);
   const hydratedSelectionScopeRef = useRef('');
   const skipSelectionPersistRef = useRef(false);
@@ -100,7 +100,7 @@ export default function POSPage() {
   // GAP-05: Parse quick-paste input and merge with dropdown selections
   const quickSlocIds = useMemo(() => {
     return quickSlocInput
-      .split(',')
+      .split(/[,;\s]+/)
       .map((s) => s.trim())
       .filter(Boolean);
   }, [quickSlocInput]);
@@ -180,11 +180,17 @@ export default function POSPage() {
 
   useEffect(() => {
     if (!preferencesLoadedRef.current) return;
-    const preferences = { posSalesFromDate: salesFromDate, posSalesToDate: salesToDate, posInvItem: invItem };
+    const preferences = {
+      posSalesFromDate: salesFromDate,
+      posSalesToDate: salesToDate,
+      posInvItem: invItem,
+      posCustomSlocInput: quickSlocInput,
+    };
     try {
       localStorage.setItem('pos_sales_from_date', salesFromDate);
       localStorage.setItem('pos_sales_to_date', salesToDate);
       localStorage.setItem('pos_inv_item', invItem);
+      localStorage.setItem('pos_custom_sloc_input', quickSlocInput);
     } catch {}
     invoke('settings:set', {
       ...preferences,
@@ -192,7 +198,7 @@ export default function POSPage() {
       posSelectedInvSlocs: effectiveInvSlocs,
       posSalesStoreFilterEnabled: salesStoreFilterEnabled,
     }).catch(() => null);
-  }, [salesFromDate, salesToDate, invItem, effectiveSalesStores, effectiveInvSlocs, salesStoreFilterEnabled]);
+  }, [salesFromDate, salesToDate, invItem, quickSlocInput, effectiveSalesStores, effectiveInvSlocs, salesStoreFilterEnabled]);
   const [invDir, setInvDir] = useState(() => {
     try {
       return localStorage.getItem('pos_inv_dir') || (activeProfile?.exportPath ? `${activeProfile.exportPath}\\Inventory` : '');
@@ -299,6 +305,7 @@ export default function POSPage() {
       if (data?.posSalesFromDate) setSalesFromDate(data.posSalesFromDate);
       if (data?.posSalesToDate) setSalesToDate(data.posSalesToDate);
       if (typeof data?.posInvItem === 'string') setInvItem(data.posInvItem);
+      if (typeof data?.posCustomSlocInput === 'string') setQuickSlocInput(data.posCustomSlocInput);
       preferencesLoadedRef.current = true;
       if (data?.posSalesDir) {
         setSalesDir(data.posSalesDir);
@@ -934,7 +941,7 @@ export default function POSPage() {
 
           <button
             type="button"
-            disabled={isLoading || (salesStoreFilterEnabled && effectiveSalesStores.length === 0)}
+            disabled={isLoading}
             onClick={handleRunSales}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded shadow transition-colors cursor-pointer mt-4"
           >
@@ -1116,7 +1123,7 @@ export default function POSPage() {
 
         <button
           onClick={handleRunBoth}
-          disabled={isLoading || (salesStoreFilterEnabled && effectiveSalesStores.length === 0)}
+          disabled={isLoading}
           className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded shadow transition-colors cursor-pointer whitespace-nowrap"
         >
           <Play className="w-4 h-4 fill-current" />

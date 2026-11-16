@@ -28,7 +28,7 @@ const SAP_MODULE_LABELS: Record<string, string> = {
 export default function DashboardPage() {
   const {
     agentStatus, networkStatus, isCheckingNetwork,
-    isLoading, startWorkflow, loadHistory, checkNetwork, refreshStatus
+    isLoading, activeProgress, startWorkflow, loadHistory, checkNetwork, refreshStatus
   } = useAgentStore();
 
   const { profiles, activeProfileId, setActiveProfile, getActiveProfile } = useEnterpriseStore();
@@ -321,6 +321,14 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {activeProgress && (
+        <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700">
+          <span className={`h-2 w-2 rounded-full ${activeProgress.status === 'RUNNING' ? 'bg-blue-500' : activeProgress.status === 'FAILED' ? 'bg-red-500' : 'bg-emerald-500'}`} />
+          <span className="font-semibold">{activeProgress.stepName}</span>
+          {activeProgress.errorMessage && <span className="text-red-700">{activeProgress.errorMessage}</span>}
+        </div>
+      )}
 
       {/* Modal Profile */}
       <EnterpriseProfilesModal

@@ -292,9 +292,11 @@ export interface AppSettings {
   posSalesFromDate?: string;
   posSalesToDate?: string;
   posSelectedSalesStores?: string[];
+  posSalesStoreFilterEnabled?: boolean;
   posSalesDir?: string;
   posSalesFileName?: string;
   posSelectedInvSlocs?: string[];
+  posCustomSlocInput?: string;
   posInvItem?: string;
   posInvDir?: string;
   posInvFileName?: string;

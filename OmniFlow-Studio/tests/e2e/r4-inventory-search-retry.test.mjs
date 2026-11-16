@@ -3,10 +3,35 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { POSAdapter } from '../../packages/pos-adapter/dist/index.js';
 import { MockBrowserManager } from './harness/mock-browser-engine.mjs';
 import { MockPage } from './harness/mock-page.mjs';
 import { createMockPOSInventoryDocument, MockDocument, MockWindow, MockEvent } from './harness/mock-dom.mjs';
+
+const require = createRequire(new URL('../../packages/file-engine/package.json', import.meta.url));
+const ExcelJS = require('exceljs');
+
+async function withValidInventoryBlob(page, callback) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Inventory');
+  sheet.addRow(['Store ID', 'Store Name', 'Sloc ID', 'Whs Name', 'Item Code', 'Item Name', 'Quantity']);
+  sheet.addRow(['TM01', 'Test Store', 'TM01', 'Test Warehouse', 'ITEM-01', 'Test item', 5]);
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  const previousReader = globalThis.FileReader;
+  page.window.FileReader = class {
+    readAsDataURL(blob) {
+      this.result = `data:${blob?.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};base64,${buffer.toString('base64')}`;
+      this.onload?.();
+    }
+  };
+  globalThis.FileReader = page.window.FileReader;
+  try { return await callback(); }
+  finally {
+    if (previousReader === undefined) delete globalThis.FileReader;
+    else globalThis.FileReader = previousReader;
+  }
+}
 
 test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
 
@@ -22,7 +47,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     browser.setPage('POS', page);
 
     const adapter = new POSAdapter(browser, 'https://pos.test/');
-    await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
+    await withValidInventoryBlob(page, () => adapter.downloadInventoryOnhand({ storeFilter: 'TM01' }));
 
     assert.equal(win.__searchClicks, 0);
   });
@@ -62,7 +87,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     browser.setPage('POS', page);
 
     const adapter = new POSAdapter(browser, 'https://pos.test/');
-    await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
+    await withValidInventoryBlob(page, () => adapter.downloadInventoryOnhand({ storeFilter: 'TM01' }));
 
     assert.equal(win.__searchClicks, 1);
   });
@@ -86,7 +111,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     browser.setPage('POS', page);
 
     const adapter = new POSAdapter(browser, 'https://pos.test/');
-    await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
+    await withValidInventoryBlob(page, () => adapter.downloadInventoryOnhand({ storeFilter: 'TM01' }));
 
     assert.equal(win.__searchClicks, 3);
   });
@@ -119,7 +144,7 @@ test.describe('R4: Inventory Onhand Search Retry and Wait Logic', () => {
     browser.setPage('POS', page);
 
     const adapter = new POSAdapter(browser, 'https://pos.test/');
-    await adapter.downloadInventoryOnhand({ storeFilter: 'TM01' });
+    await withValidInventoryBlob(page, () => adapter.downloadInventoryOnhand({ storeFilter: 'TM01' }));
 
     assert.equal(win.__searchClicks, 6);
   });

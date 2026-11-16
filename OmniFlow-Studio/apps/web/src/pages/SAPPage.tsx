@@ -406,6 +406,7 @@ export default function SAPPage() {
             }} className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded">
               <option value="HOME">Trang chủ SAP</option><option value="PURCHASING_PO">Đơn mua hàng (Purchase Order)</option>
               <option value="PURCHASING_GRPO">Nhập kho (Goods Receipt PO)</option><option value="PURCHASING_RETURN">Trả hàng (Goods Return)</option>
+              <option value="INVENTORY_STATUS">Kiểm tra Tồn kho SAP (Inventory Status)</option>
             </select>
           </div>
 

@@ -11,6 +11,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import os from 'os';
 import ExcelJS from 'exceljs';
+import AdmZip from 'adm-zip';
 import { POS_SELECTORS } from './selectors';
 import { BrowserManager } from '@fm/browser-engine';
 import { resolveNamingTemplate } from '@fm/file-engine';
@@ -275,39 +276,65 @@ export async function setGridFilter(
 export async function enforceExcelFilterIntegrity(
   filePath: string,
   filterSpec: { stores?: string[]; slocs?: string[]; items?: string[] }
-): Promise<{ rowCount: number; filtered: boolean }> {
-  const hasStoreFilter = (filterSpec.stores?.length ?? 0) > 0;
-  const hasSlocFilter = (filterSpec.slocs?.length ?? 0) > 0;
-  const hasItemFilter = (filterSpec.items?.length ?? 0) > 0;
+): Promise<{ rowCount: number; filtered: boolean; modified: boolean }> {
+  const stores = parseFilterValues(filterSpec.stores).map((value) => value.toLowerCase());
+  const slocs = parseFilterValues(filterSpec.slocs).map((value) => value.toLowerCase());
+  const items = parseFilterValues(filterSpec.items).map((value) => value.toLowerCase());
+  const hasStoreFilter = stores.length > 0;
+  const hasSlocFilter = slocs.length > 0;
+  const hasItemFilter = items.length > 0;
 
   if (!hasStoreFilter && !hasSlocFilter && !hasItemFilter) {
-    return { rowCount: -1, filtered: false };
+    return { rowCount: -1, filtered: false, modified: false };
   }
 
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  try {
+    await workbook.xlsx.readFile(filePath);
+  } catch (readError) {
+    // DevExtreme exports may prefix XML element names with x:, which ExcelJS does
+    // not accept. Normalize only the workbook and worksheet XML and retry once.
+    const archive = new AdmZip(filePath);
+    let normalizedAny = false;
+    for (const entry of archive.getEntries()) {
+      if (!/^xl\/workbook\.xml$|^xl\/worksheets\/[^/]+\.xml$/i.test(entry.entryName)) continue;
+      const source = entry.getData().toString('utf8');
+      const normalized = source.replace(/<(\/?)x:([\w.-]+)(?=[\s>])/g, '<$1$2');
+      if (normalized !== source) {
+        archive.updateFile(entry.entryName, Buffer.from(normalized, 'utf8'));
+        normalizedAny = true;
+      }
+    }
+    if (!normalizedAny) throw readError;
+    archive.writeZip(filePath);
+    await workbook.xlsx.readFile(filePath);
+  }
 
   const worksheet = workbook.worksheets[0];
-  if (!worksheet) return { rowCount: 0, filtered: false };
+  if (!worksheet) throw new Error('POS export workbook has no worksheet to filter.');
 
   // Find header row (row 1) and locate relevant column indices
   const headerRow = worksheet.getRow(1);
-  let storeColIdx = -1;
-  let slocColIdx = -1;
-  let itemCodeColIdx = -1;
-  let itemNameColIdx = -1;
+  let storeColIdx = 0;
+  let slocColIdx = 0;
+  let itemCodeColIdx = 0;
+  let itemNameColIdx = 0;
 
   headerRow.eachCell((cell, colNumber) => {
     const header = String(cell.value ?? '').trim().toLowerCase();
-    if (['store id', 'storeid', 'cửa hàng'].includes(header)) storeColIdx = colNumber;
-    else if (['sloc id', 'slocid', 'mã kho'].includes(header)) slocColIdx = colNumber;
-    else if (['item code', 'itemcode', 'mã hàng'].includes(header)) itemCodeColIdx = colNumber;
-    else if (['item name', 'itemname', 'tên hàng'].includes(header)) itemNameColIdx = colNumber;
+    if (/store\s*id|store\s*name|^store$|cửa\s*hàng|mã\s*ch/i.test(header)) storeColIdx ||= colNumber;
+    if (/sloc\s*id|^sloc$|whs\s*name|mã\s*kho|tên\s*kho|^kho$/i.test(header)) slocColIdx ||= colNumber;
+    if (/item\s*code|item\s*name|mã\s*hàng|mã\s*sản\s*phẩm|tên\s*sản\s*phẩm|sku/i.test(header)) {
+      if (/item\s*name|tên\s*sản\s*phẩm/i.test(header)) itemNameColIdx ||= colNumber;
+      else itemCodeColIdx ||= colNumber;
+    }
   });
 
-  const storeFiltersLC = (filterSpec.stores ?? []).map((s) => s.toLowerCase());
-  const slocFiltersLC = (filterSpec.slocs ?? []).map((s) => s.toLowerCase());
-  const itemFiltersLC = (filterSpec.items ?? []).map((s) => s.toLowerCase());
+  const storeColumn = storeColIdx > 0 ? storeColIdx : slocColIdx;
+  const slocColumn = slocColIdx > 0 ? slocColIdx : storeColIdx;
+  if (hasStoreFilter && storeColumn < 1) throw new Error('Cannot enforce POS store filter: no Store or Sloc column was found.');
+  if (hasSlocFilter && slocColumn < 1) throw new Error('Cannot enforce POS Sloc filter: no Sloc or Store column was found.');
+  if (hasItemFilter && itemCodeColIdx < 1 && itemNameColIdx < 1) throw new Error('Cannot enforce POS item filter: no item code or name column was found.');
 
   // Collect row numbers to delete (iterate in reverse to preserve indices)
   const rowsToDelete: number[] = [];
@@ -317,25 +344,25 @@ export async function enforceExcelFilterIntegrity(
     const getCellVal = (colIdx: number): string =>
       colIdx > 0 ? String(row.getCell(colIdx).value ?? '').trim().toLowerCase() : '';
 
-    const storeVal = getCellVal(storeColIdx);
-    const slocVal = getCellVal(slocColIdx);
+    const storeVal = getCellVal(storeColumn);
+    const slocVal = getCellVal(slocColumn);
     const itemCodeVal = getCellVal(itemCodeColIdx);
     const itemNameVal = getCellVal(itemNameColIdx);
 
     let keep = true;
 
-    if (hasStoreFilter && storeColIdx > 0) {
-      const matches = storeFiltersLC.some((f) => storeVal.includes(f));
+    if (hasStoreFilter && storeColumn > 0) {
+      const matches = stores.some((f) => storeVal.includes(f));
       if (!matches) keep = false;
     }
 
-    if (keep && hasSlocFilter && slocColIdx > 0) {
-      const matches = slocFiltersLC.some((f) => slocVal.includes(f));
+    if (keep && hasSlocFilter && slocColumn > 0) {
+      const matches = slocs.some((f) => slocVal.includes(f));
       if (!matches) keep = false;
     }
 
     if (keep && hasItemFilter && (itemCodeColIdx > 0 || itemNameColIdx > 0)) {
-      const matches = itemFiltersLC.some((f) =>
+      const matches = items.some((f) =>
         (itemCodeColIdx > 0 && itemCodeVal.includes(f)) ||
         (itemNameColIdx > 0 && itemNameVal.includes(f))
       );
@@ -345,7 +372,11 @@ export async function enforceExcelFilterIntegrity(
     if (!keep) rowsToDelete.push(rowNumber);
   });
 
-  // Delete rows in reverse order to keep indices stable
+  if (rowsToDelete.length === 0) {
+    return { rowCount: Math.max(0, worksheet.rowCount - 1), filtered: false, modified: false };
+  }
+
+  // Delete rows in reverse order to keep indices stable and retain header styling.
   for (let i = rowsToDelete.length - 1; i >= 0; i--) {
     worksheet.spliceRows(rowsToDelete[i], 1);
   }
@@ -353,7 +384,7 @@ export async function enforceExcelFilterIntegrity(
   await workbook.xlsx.writeFile(filePath);
 
   const remainingRows = worksheet.rowCount > 1 ? worksheet.rowCount - 1 : 0;
-  return { rowCount: remainingRows, filtered: true };
+  return { rowCount: remainingRows, filtered: true, modified: true };
 }
 
 export class POSAdapter {
@@ -684,7 +715,7 @@ export class POSAdapter {
             writeFileSync(tempPath, buf);
             await enforceExcelFilterIntegrity(tempPath, {
               stores: parseFilterValues(options.storeFilter),
-            }).catch(() => null);
+            });
             return {
               reportType: 'SALES',
               suggestedFilename: tempFilename,
@@ -705,7 +736,7 @@ export class POSAdapter {
           writeFileSync(tempPath, buf);
           await enforceExcelFilterIntegrity(tempPath, {
             stores: parseFilterValues(options.storeFilter),
-          }).catch(() => null);
+          });
           return {
             reportType: 'SALES',
             suggestedFilename: tempFilename,
@@ -725,7 +756,7 @@ export class POSAdapter {
         await download.saveAs(tempPath);
         await enforceExcelFilterIntegrity(tempPath, {
           stores: parseFilterValues(options.storeFilter),
-        }).catch(() => null);
+        });
         return {
           reportType: 'SALES',
           suggestedFilename: tempFilename,
@@ -741,7 +772,7 @@ export class POSAdapter {
     if (existsSync(tempPath)) {
       await enforceExcelFilterIntegrity(tempPath, {
         stores: parseFilterValues(options.storeFilter),
-      }).catch(() => null);
+      });
       return {
         reportType: 'SALES',
         suggestedFilename: tempFilename,
@@ -906,6 +937,11 @@ export class POSAdapter {
             const buf = Buffer.from(base64Data, 'base64');
             if (buf.length > 50) {
               writeFileSync(tempPath, buf);
+              await enforceExcelFilterIntegrity(tempPath, {
+                stores: parsedStores,
+                slocs: parsedSlocs,
+                items: parsedItems,
+              });
               return {
                 reportType: 'INVENTORY',
                 suggestedFilename: tempFilename,
@@ -1013,6 +1049,11 @@ export class POSAdapter {
         }
 
         await workbook.xlsx.writeFile(tempPath);
+        await enforceExcelFilterIntegrity(tempPath, {
+          stores: parsedStores,
+          slocs: parsedSlocs,
+          items: parsedItems,
+        });
         return {
           reportType: 'INVENTORY',
           suggestedFilename: tempFilename,

@@ -42,7 +42,7 @@ export default function Layout() {
     <div className="flex h-screen overflow-hidden bg-slate-100 font-sans text-slate-800">
       {/* Toast thông báo kiểm tra mạng toàn cục */}
       {networkFeedback && (
-        <div className="fixed top-4 right-6 z-50 transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+        <div className="fixed top-4 right-6 z-50">
           <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg shadow-lg border text-xs font-medium ${
             networkFeedback.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-800'

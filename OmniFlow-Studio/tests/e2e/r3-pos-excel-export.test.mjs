@@ -6,11 +6,36 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import { POSAdapter } from '../../packages/pos-adapter/dist/index.js';
 import { ExcelValidator, DownloadFileManager, resolveNamingTemplate } from '../../packages/file-engine/dist/index.js';
 import { MockBrowserManager } from './harness/mock-browser-engine.mjs';
 import { MockPage, MockDownload } from './harness/mock-page.mjs';
 import { createMockPOSSalesDocument, MockDocument, MockWindow, MockEvent } from './harness/mock-dom.mjs';
+
+const require = createRequire(new URL('../../packages/file-engine/package.json', import.meta.url));
+const ExcelJS = require('exceljs');
+
+async function withValidExportBlob(page, callback) {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sales');
+  sheet.addRow(['Store ID', 'Sloc ID', 'Item Code', 'Item Name']);
+  sheet.addRow(['TM01', 'TM01', 'ITEM-01', 'Test item']);
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  const previousReader = globalThis.FileReader;
+  page.window.FileReader = class {
+    readAsDataURL(blob) {
+      this.result = `data:${blob?.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};base64,${buffer.toString('base64')}`;
+      this.onload?.();
+    }
+  };
+  globalThis.FileReader = page.window.FileReader;
+  try { return await callback(); }
+  finally {
+    if (previousReader === undefined) delete globalThis.FileReader;
+    else globalThis.FileReader = previousReader;
+  }
+}
 
 if (!DownloadFileManager.prototype.generateFilename) {
   DownloadFileManager.prototype.generateFilename = function(reportType, options = {}) {
@@ -101,11 +126,11 @@ test.describe('R3: POS Excel Export Button & Blob Interception', () => {
     browser.setPage('POS', page);
 
     const adapter = new POSAdapter(browser, 'https://pos.test/');
-    const result = await adapter.downloadSalesTransactionDetail({
+    const result = await withValidExportBlob(page, () => adapter.downloadSalesTransactionDetail({
       fromDate: '2026-11-01',
       toDate: '2026-11-10',
       storeFilter: 'TM01',
-    });
+    }));
 
     assert.equal(result.reportType, 'SALES');
     assert.ok(result.suggestedFilename.endsWith('.xlsx'));
