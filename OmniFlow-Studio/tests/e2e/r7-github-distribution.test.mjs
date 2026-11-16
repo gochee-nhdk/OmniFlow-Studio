@@ -157,4 +157,14 @@ test.describe('R7: GitHub App Distribution & Packaging', () => {
   test('T2-R7-06: GITHUB_TOKEN Secret Inheritance in Workflow', () => {
     assert.ok(REQUIRED_RELEASE_WORKFLOW_YAML.includes('GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'));
   });
+
+  test('T2-R7-07: Electron packaging keeps compiled dependency entrypoints under build/src', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve('apps/local-agent/package.json'), 'utf8'));
+    assert.ok(packageJson.build.files.includes('!node_modules/**/src/**/*.ts'));
+    assert.equal(packageJson.build.files.includes('!node_modules/**/src/**'), false,
+      'a broad src exclusion removes runtime files such as fast-csv/build/src/index.js');
+    const fastCsvPackage = JSON.parse(fs.readFileSync(path.resolve('node_modules/.pnpm/fast-csv@4.3.6/node_modules/fast-csv/package.json'), 'utf8'));
+    const runtimeEntry = path.resolve('node_modules/.pnpm/fast-csv@4.3.6/node_modules/fast-csv', fastCsvPackage.main);
+    assert.equal(fs.existsSync(runtimeEntry), true, 'the runtime entrypoint used by ExcelJS must be present before packaging');
+  });
 });
