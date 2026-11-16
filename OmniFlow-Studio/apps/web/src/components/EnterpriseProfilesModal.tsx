@@ -30,6 +30,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   const [formCode, setFormCode] = useState('');
   const [formErpType, setFormErpType] = useState<ERPType>('SAP_B1');
   const [formErpUrl, setFormErpUrl] = useState('');
+  const [formPosUrl, setFormPosUrl] = useState('');
   const [formServer, setFormServer] = useState('');
   const [formDatabase, setFormDatabase] = useState('');
   const [formCompanyName, setFormCompanyName] = useState('');
@@ -64,6 +65,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setFormCode('');
     setFormErpType('SAP_B1');
     setFormErpUrl('https://');
+    setFormPosUrl('https://');
     setFormServer('');
     setFormDatabase('');
     setFormCompanyName('');
@@ -83,6 +85,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setFormCode(p.code);
     setFormErpType(p.erpType);
     setFormErpUrl(p.erpUrl);
+    setFormPosUrl(p.posUrl || '');
     setFormServer(p.server || '');
     setFormDatabase(p.database || '');
     setFormCompanyName(p.companyName);
@@ -118,6 +121,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
       code: formCode.trim().toUpperCase(),
       erpType: formErpType,
       erpUrl: formErpUrl.trim(),
+      posUrl: formPosUrl.trim() || undefined,
       server: formServer.trim() || undefined,
       database: formDatabase.trim() || undefined,
       companyName: formCompanyName.trim(),
@@ -357,14 +361,27 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    URL kết nối ERP / POS *
+                    URL kết nối SAP SLD (erpUrl) *
                   </label>
                   <input
                     type="url"
                     required
                     value={formErpUrl}
                     onChange={(e) => setFormErpUrl(e.target.value)}
-                    placeholder="Nhập URL ERP hoặc POS"
+                    placeholder="https://sap-sld.domain.com:8443"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    URL kết nối POS RPFO (posUrl)
+                  </label>
+                  <input
+                    type="url"
+                    value={formPosUrl}
+                    onChange={(e) => setFormPosUrl(e.target.value)}
+                    placeholder="https://pos-rpfo.domain.com"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -461,7 +478,28 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="text-xs font-bold text-slate-800">Danh mục Cửa hàng / Chi nhánh</h4>
-                      <span className="text-[10px] font-mono text-slate-400">{storeMappings.length} mục</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sampleStores = [
+                              { id: 'DC0101', name: 'Tổng kho DC' },
+                              { id: 'SFM0101', name: 'Cửa hàng SFM 01' },
+                              { id: 'SFM0201', name: 'Cửa hàng SFM 02' },
+                              { id: 'SFM0301', name: 'Cửa hàng SFM 03' },
+                            ];
+                            setStoreMappings((prev) => {
+                              const existingIds = new Set(prev.map((s) => s.id));
+                              const toAdd = sampleStores.filter((s) => !existingIds.has(s.id));
+                              return [...prev, ...toAdd];
+                            });
+                          }}
+                          className="text-[10px] text-blue-600 hover:text-blue-800 font-medium underline cursor-pointer"
+                        >
+                          + Nạp mẫu
+                        </button>
+                        <span className="text-[10px] font-mono text-slate-400">{storeMappings.length} mục</span>
+                      </div>
                     </div>
 
                     {/* Table Header: 4 cols balanced (Mã: 4, Tên: 5, Sửa: 1.5, Xóa: 1.5) */}

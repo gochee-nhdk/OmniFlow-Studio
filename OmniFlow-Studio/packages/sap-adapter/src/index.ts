@@ -22,13 +22,26 @@ export type SAPAuthState =
 
 export type ConcurrentLoginPrompt = (message: string) => Promise<boolean>;
 
+export type SAPTargetModule =
+  | 'HOME'
+  | 'PURCHASING_PO'
+  | 'PURCHASING_GRPO'
+  | 'PURCHASING_RETURN'
+  | 'INVENTORY_STATUS';
+
+export type SAPWorkflowAction =
+  | 'LOGIN'
+  | 'NAVIGATE'
+  | 'EXPORT_EXCEL'
+  | 'CHECK_SESSION';
+
 export interface SAPLoginOptions {
   username: string;
   password: string;
   company?: string; // Company schema or display name configured by the user.
   server?: string;  // Database server configured by the user.
   autoTakeOverSession?: boolean;
-  targetModule?: 'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS';
+  targetModule?: SAPTargetModule;
 }
 
 /**
@@ -94,21 +107,168 @@ export class SAPAdapter {
   private async navigateToTargetModule(page: any, targetModule: SAPLoginOptions['targetModule'], onProgress?: (msg: string) => void): Promise<void> {
     await page.bringToFront?.().catch?.(() => null);
     if (!targetModule || targetModule === 'HOME') return;
-    const labels: Record<string, string[]> = {
-      PURCHASING_PO: ['Purchase Order'], PURCHASING_GRPO: ['Goods Receipt PO'],
-      PURCHASING_RETURN: ['Goods Return'], INVENTORY_STATUS: ['Inventory Status'],
+
+    // Wait for shell to stabilize after login
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => null);
+      await page.waitForSelector(
+        '.sapMShellTitle, #shell-header, .sapUshellShellHead, .sapUiUx3NavBar, nav[role="navigation"]',
+        { timeout: 10000 }
+      ).catch(() => null);
+    } catch { /* continue anyway */ }
+
+    // Module labels: [EN primary, EN alt, VI]
+    const moduleLabels: Record<string, string[][]> = {
+      PURCHASING_PO: [
+        ['Purchase Orders', 'Purchase Order', 'Đơn mua hàng'],
+      ],
+      PURCHASING_GRPO: [
+        ['Goods Receipt PO', 'Nhập hàng từ PO'],
+      ],
+      PURCHASING_RETURN: [
+        ['Goods Return', 'Goods Returns', 'Trả hàng mua'],
+      ],
+      INVENTORY_STATUS: [
+        ['Inventory Status', 'Items'],
+      ],
     };
-    const menu = page.locator(':text("Purchasing - A/P")').first();
-    if (await menu.isVisible().catch(() => false)) await menu.click().catch(() => null);
-    for (const label of labels[targetModule] || []) {
-      const item = page.locator(`:text("${label}")`).first();
-      if (await item.isVisible().catch(() => false)) {
-        await item.click().catch(() => null);
-        onProgress?.(`Đã mở phân hệ ${label}.`);
-        return;
+
+    const moduleReadable: Record<string, string> = {
+      PURCHASING_PO: 'Đơn mua hàng (Purchase Orders)',
+      PURCHASING_GRPO: 'Nhập hàng từ PO (Goods Receipt PO)',
+      PURCHASING_RETURN: 'Trả hàng mua (Goods Return)',
+      INVENTORY_STATUS: 'Báo cáo tồn kho (Inventory Status)',
+    };
+
+    // ── Method 1: Left Menu Tree ──────────────────────────────────────────────
+    let navigated = false;
+    try {
+      // Find and click parent menu group
+      const parentMenuLabels = ['Purchasing - A/P', 'Mua hàng - A/P'];
+      if (targetModule === 'INVENTORY_STATUS') {
+        parentMenuLabels.unshift('Inventory', 'Kho');
       }
+
+      let parentClicked = false;
+      for (const parentLabel of parentMenuLabels) {
+        const parentItem = page.locator(`:text("${parentLabel}")`).first();
+        if (await parentItem.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await parentItem.click().catch(() => null);
+          await page.waitForTimeout(500);
+          parentClicked = true;
+          break;
+        }
+      }
+
+      if (parentClicked) {
+        // For Inventory Status — may need to expand sub-group
+        if (targetModule === 'INVENTORY_STATUS') {
+          const subGroupLabels = ['Inventory Reports', 'Báo cáo tồn kho'];
+          for (const sg of subGroupLabels) {
+            const sgItem = page.locator(`:text("${sg}")`).first();
+            if (await sgItem.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await sgItem.click().catch(() => null);
+              await page.waitForTimeout(400);
+              break;
+            }
+          }
+        }
+
+        // Click the target submenu item
+        const subLabels = (moduleLabels[targetModule] || [[]])[0] || [];
+        for (const label of subLabels) {
+          const item = page.locator(`:text("${label}")`).first();
+          if (await item.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await item.click().catch(() => null);
+            await page.waitForTimeout(800);
+            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
+            navigated = true;
+            break;
+          }
+        }
+      }
+    } catch { /* fall through to Method 2 */ }
+
+    // ── Method 2: Tiles / Quick Search (fallback) ─────────────────────────────
+    if (!navigated) {
+      try {
+        // Try to open the hamburger / menu button first
+        const menuTriggers = [
+          '#shellAppTitle',
+          'button[aria-label*="Menu" i]',
+          '.sapUshellMeAreaHeaderButton',
+          '.sapUshellHeadItm[title*="Menu" i]',
+        ];
+        for (const trigger of menuTriggers) {
+          const btn = page.locator(trigger).first();
+          if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+            await btn.click().catch(() => null);
+            await page.waitForTimeout(500);
+            break;
+          }
+        }
+
+        // Try tiles
+        const tileLabels = (moduleLabels[targetModule] || [[]])[0] || [];
+        for (const label of tileLabels) {
+          // SAP Fiori tiles
+          const tile = page.locator(`.sapMGT:has-text("${label}"), .sapUshellTile:has-text("${label}")`).first();
+          if (await tile.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await tile.click().catch(() => null);
+            await page.waitForTimeout(800);
+            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
+            navigated = true;
+            break;
+          }
+          // Generic text link / list item
+          const textLink = page.locator(`:text("${label}")`).first();
+          if (await textLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+            await textLink.click().catch(() => null);
+            await page.waitForTimeout(800);
+            onProgress?.(`Đã mở sẵn phân hệ ${moduleReadable[targetModule] || targetModule} trên tab trình duyệt SAP — Sẵn sàng thao tác!`);
+            navigated = true;
+            break;
+          }
+        }
+      } catch { /* ignore fallback errors */ }
     }
-    onProgress?.(`Đã đăng nhập SAP; chưa tìm thấy menu ${targetModule} để điều hướng.`);
+
+    if (!navigated) {
+      onProgress?.(`Đã đăng nhập SAP; chưa tìm thấy menu ${targetModule} để điều hướng.`);
+    }
+  }
+
+  /**
+   * Click the Excel export button in the current SAP list screen if available.
+   * Works for Purchase Orders, Goods Return and other list views that expose
+   * an export-to-spreadsheet action.
+   */
+  async exportCurrentListToExcel(page: any): Promise<boolean> {
+    // Common SAP B1 / Fiori export selectors
+    const exportSelectors = [
+      'button[title*="Export to Excel" i]',
+      'button[title*="Export to Spreadsheet" i]',
+      'button[aria-label*="Export to Excel" i]',
+      'button[aria-label*="Export to Spreadsheet" i]',
+      ':text("Export to Excel")',
+      ':text("Export to Spreadsheet")',
+      ':text("Xuất Excel")',
+      ':text("Xuất ra Excel")',
+      '.sapUiTableToolbar button[title*="xls" i]',
+      '[data-action="exportExcel"]',
+    ];
+
+    for (const sel of exportSelectors) {
+      try {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+          await btn.click().catch(() => null);
+          await page.waitForTimeout(1500);
+          return true;
+        }
+      } catch { /* try next */ }
+    }
+    return false;
   }
 
   constructor(

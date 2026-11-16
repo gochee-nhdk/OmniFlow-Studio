@@ -80,6 +80,8 @@ export function registerAll(dbPath: string): void {
     downloadDir: path.join(app.getPath('userData'), 'Temp'),
     userDataDir: app.getPath('userData'),
     headless: false,
+    allowCdpAttach: true,
+    cdpPorts: [9222, 9223, 9229],
   });
 
   registerAgentHandlers();

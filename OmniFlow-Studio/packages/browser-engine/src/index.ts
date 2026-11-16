@@ -42,8 +42,8 @@ export class BrowserManager {
     this.profileBase = getProfileBase(options.userDataDir);
     this.headless = options.headless ?? false;
     this.onProgress = options.onProgress;
-    this.allowCdpAttach = options.allowCdpAttach ?? false;
-    this.cdpPorts = options.cdpPorts ?? [];
+    this.allowCdpAttach = options.allowCdpAttach ?? true;
+    this.cdpPorts = options.cdpPorts && options.cdpPorts.length > 0 ? options.cdpPorts : [9222, 9223, 9229];
     mkdirSync(this.downloadDir, { recursive: true });
   }
 
@@ -209,25 +209,34 @@ export class BrowserManager {
   }
 
   async closeContext(profile: BrowserProfile): Promise<void> {
-    const ownedPage = this.profilePages.get(profile);
-    if (ownedPage && !ownedPage.isClosed()) await ownedPage.close().catch(() => null);
+    // When attached over CDP, do NOT close the user's tabs — just forget our handle.
+    if (!this.attachedOverCDP) {
+      const ownedPage = this.profilePages.get(profile);
+      if (ownedPage && !ownedPage.isClosed()) await ownedPage.close().catch(() => null);
+    }
     this.profilePages.delete(profile);
     this.contexts.delete(profile);
   }
 
-  /** Close task tabs but keep the managed browser/profile ready for the next automation. */
+  /** Release tab handles but keep the managed browser/profile ready for the next automation. */
   async closeAll(): Promise<void> {
     for (const profile of Array.from(this.contexts.keys())) await this.closeContext(profile);
   }
 
-  /** Shutdown the process-owned browser on app exit; an explicitly attached user's browser is left open. */
+  /** Shutdown on app exit. For CDP connections, browser.close() only disconnects the socket —
+   *  it does NOT close the user's browser window or tabs. */
   async shutdown(): Promise<void> {
     const context = this.sharedContext;
     const isAttached = this.attachedOverCDP;
     await this.closeAll();
     this.sharedContext = undefined;
     this.attachedOverCDP = false;
-    if (context && !isAttached) await context.close().catch(() => null);
+    if (context && !isAttached) {
+      await context.close().catch(() => null);
+    } else if (context && isAttached) {
+      // Disconnect CDP socket only — leaves user's browser/tabs alive on screen.
+      await context.browser()?.close().catch(() => null);
+    }
   }
 
   isContextOpen(profile: BrowserProfile): boolean {

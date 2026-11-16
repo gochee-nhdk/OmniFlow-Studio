@@ -20,9 +20,11 @@ export default function Layout() {
     checkNetwork();
     loadProfiles();
     const interval = setInterval(() => {
+      // Skip network check if automation is currently running to save CPU/bandwidth
+      if (useAgentStore.getState().isLoading) return;
       refreshStatus();
       checkNetwork();
-    }, 20000);
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
 

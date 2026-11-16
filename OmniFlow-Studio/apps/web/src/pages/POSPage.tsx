@@ -92,9 +92,26 @@ export default function POSPage() {
   const invSlocDropdownRef = useRef<HTMLDivElement>(null);
 
   const [invItem, setInvItem] = useState(() => localStorage.getItem('pos_inv_item') || '');
+  const [quickSlocInput, setQuickSlocInput] = useState('');
   const preferencesLoadedRef = useRef(false);
   const hydratedSelectionScopeRef = useRef('');
   const skipSelectionPersistRef = useRef(false);
+
+  // GAP-05: Parse quick-paste input and merge with dropdown selections
+  const quickSlocIds = useMemo(() => {
+    return quickSlocInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [quickSlocInput]);
+
+  const effectiveInvSlocs = useMemo(() => {
+    return [...new Set([...selectedInvSlocs, ...quickSlocIds])];
+  }, [selectedInvSlocs, quickSlocIds]);
+
+  const effectiveSalesStores = useMemo(() => {
+    return [...new Set([...selectedSalesStores, ...quickSlocIds])];
+  }, [selectedSalesStores, quickSlocIds]);
 
   useEffect(() => {
     try {
@@ -169,8 +186,13 @@ export default function POSPage() {
       localStorage.setItem('pos_sales_to_date', salesToDate);
       localStorage.setItem('pos_inv_item', invItem);
     } catch {}
-    invoke('settings:set', preferences).catch(() => null);
-  }, [salesFromDate, salesToDate, invItem]);
+    invoke('settings:set', {
+      ...preferences,
+      posSelectedSalesStores: effectiveSalesStores,
+      posSelectedInvSlocs: effectiveInvSlocs,
+      posSalesStoreFilterEnabled: salesStoreFilterEnabled,
+    }).catch(() => null);
+  }, [salesFromDate, salesToDate, invItem, effectiveSalesStores, effectiveInvSlocs, salesStoreFilterEnabled]);
   const [invDir, setInvDir] = useState(() => {
     try {
       return localStorage.getItem('pos_inv_dir') || (activeProfile?.exportPath ? `${activeProfile.exportPath}\\Inventory` : '');
@@ -472,10 +494,10 @@ export default function POSPage() {
   };
 
   const handleRunSales = async () => {
-    if (salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0)) return;
     if (!(await persistPosCredentialsBeforeRun())) return;
 
-    const storeFilterArg = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
+    // GAP-02: empty selection = All (no blocking)
+    const storeFilterArg = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : (effectiveSalesStores.length > 0 ? effectiveSalesStores.join(',') : 'All');
 
     await startWorkflow('DOWNLOAD_SALES', {
       posBaseUrl: posUrl,
@@ -492,10 +514,10 @@ export default function POSPage() {
   };
 
   const handleRunInventory = async () => {
-    if (slocList.length === 0 || selectedInvSlocs.length === 0) return;
     if (!(await persistPosCredentialsBeforeRun())) return;
 
-    const slocFilterArg = isAllInvSlocsSelected ? '' : selectedInvSlocs.join(',');
+    // GAP-02: empty selection = All Slocs (no blocking)
+    const slocFilterArg = effectiveInvSlocs.length === 0 || (isAllInvSlocsSelected && quickSlocIds.length === 0) ? '' : effectiveInvSlocs.join(',');
 
     await startWorkflow('DOWNLOAD_INVENTORY', {
       posBaseUrl: posUrl,
@@ -512,11 +534,11 @@ export default function POSPage() {
   };
 
   const handleRunBoth = async () => {
-    if ((salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0)) || slocList.length === 0 || selectedInvSlocs.length === 0) return;
     if (!(await persistPosCredentialsBeforeRun())) return;
 
-    const salesStoreFilter = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : selectedSalesStores.join(',');
-    const invSlocFilter = isAllInvSlocsSelected ? '' : selectedInvSlocs.join(',');
+    // GAP-02: empty selection = All (no blocking)
+    const salesStoreFilter = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : (effectiveSalesStores.length > 0 ? effectiveSalesStores.join(',') : 'All');
+    const invSlocFilter = effectiveInvSlocs.length === 0 || (isAllInvSlocsSelected && quickSlocIds.length === 0) ? '' : effectiveInvSlocs.join(',');
 
     await startWorkflow('POS_AUTOMATION', {
       posBaseUrl: posUrl,
@@ -912,7 +934,7 @@ export default function POSPage() {
 
           <button
             type="button"
-            disabled={isLoading || (salesStoreFilterEnabled && (slocList.length === 0 || selectedSalesStores.length === 0))}
+            disabled={isLoading || (salesStoreFilterEnabled && effectiveSalesStores.length === 0)}
             onClick={handleRunSales}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded shadow transition-colors cursor-pointer mt-4"
           >
@@ -951,7 +973,7 @@ export default function POSPage() {
                 </span>
                 <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" />
               </button>
-              {slocList.length === 0 && <p className="mt-1 text-[11px] text-amber-700">Thêm cửa hàng hoặc kho trong Thiết lập doanh nghiệp để chọn dữ liệu.</p>}
+              {slocList.length === 0 && <p className="mt-1 text-[11px] text-amber-700">Thêm cửa hàng hoặc kho trong Thiết lập doanh nghiệp để chọn dữ liệu (hoặc dán nhanh bên dưới).</p>}
 
               {isInvSlocDropdownOpen && (
                 <div className="absolute z-20 mt-1 w-full bg-white border border-slate-300 rounded-md shadow-lg max-h-56 overflow-y-auto p-1.5 space-y-1">
@@ -995,6 +1017,20 @@ export default function POSPage() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* Quick-paste Sloc input (GAP-05) */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">
+                Nhập / Dán nhanh mã Sloc ID hoặc Cửa hàng (cách nhau bởi dấu phẩy)
+              </label>
+              <input
+                type="text"
+                value={quickSlocInput}
+                onChange={(e) => setQuickSlocInput(e.target.value)}
+                placeholder="VD: DC0101, SFM0101, SFM0201"
+                className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
+              />
             </div>
 
             {/* Item Filter */}
@@ -1059,7 +1095,7 @@ export default function POSPage() {
 
           <button
             type="button"
-            disabled={isLoading || slocList.length === 0 || selectedInvSlocs.length === 0}
+            disabled={isLoading}
             onClick={handleRunInventory}
             className="w-full flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded shadow transition-colors cursor-pointer mt-4"
           >
@@ -1080,7 +1116,7 @@ export default function POSPage() {
 
         <button
           onClick={handleRunBoth}
-          disabled={isLoading || slocList.length === 0 || selectedInvSlocs.length === 0 || (salesStoreFilterEnabled && selectedSalesStores.length === 0)}
+          disabled={isLoading || (salesStoreFilterEnabled && effectiveSalesStores.length === 0)}
           className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded shadow transition-colors cursor-pointer whitespace-nowrap"
         >
           <Play className="w-4 h-4 fill-current" />

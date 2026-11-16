@@ -27,6 +27,9 @@ export interface WorkflowOptions {
   salesFileNameTemplate?: string;
   inventoryOutputDir?: string;
   inventoryFileNameTemplate?: string;
+  orgCode?: string;
+  sapAutoTakeOverSession?: boolean;
+  sapTargetModule?: 'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS';
 }
 
 export class DailyProcurementRunner {

@@ -110,17 +110,25 @@ export async function setGridFilter(
   const resolved = resolveColumnIdentifiers(columnField);
   const filterVals = parseFilterValues(value);
 
-  // 1. Mode A: DevExtreme dxDataGrid API
+  // 1. Mode A: DevExtreme dxDataGrid API (with jQuery fallback for Angular DevExtreme)
   if (mode === 'auto' || mode === 'api') {
     try {
       const apiSuccess = await page.evaluate(({ dataField, titles, vals }) => {
         const gridEl = document.querySelector('.dx-datagrid');
         if (!gridEl) return false;
 
+        // Try DevExpress global first, then jQuery wrapper
+        let grid: any = null;
         const devExpress = (window as any).DevExpress;
-        if (!devExpress?.ui?.dxDataGrid) return false;
-
-        const grid = devExpress.ui.dxDataGrid.getInstance(gridEl);
+        if (devExpress?.ui?.dxDataGrid) {
+          grid = devExpress.ui.dxDataGrid.getInstance(gridEl);
+        }
+        if (!grid) {
+          const jq = (window as any).jQuery;
+          if (jq) {
+            try { grid = jq(gridEl).dxDataGrid('instance'); } catch { /* ignore */ }
+          }
+        }
         if (!grid) return false;
 
         let targetField = dataField;
@@ -140,6 +148,11 @@ export async function setGridFilter(
         if (vals.length === 0) {
           grid.columnOption(targetField, 'filterValues', []);
         } else {
+          // Build filter expression
+          const filterExpr = vals.length === 1
+            ? [targetField, '=', vals[0]]
+            : vals.flatMap((v: string, idx: number) => idx === 0 ? [[targetField, '=', v]] : ['or', [targetField, '=', v]]);
+          try { grid.filter(filterExpr); } catch { /* non-fatal */ }
           grid.columnOption(targetField, 'filterValues', vals);
           grid.columnOption(targetField, 'filterType', 'include');
         }
@@ -193,12 +206,29 @@ export async function setGridFilter(
       ).first();
       await popup.waitFor({ state: 'visible', timeout: 5000 });
 
+      // Uncheck "(Select All)" / "(Chọn tất cả)" first to deselect all existing selections
+      const selectAllItem = popup.locator('.dx-list-item, .dx-item').filter({
+        hasText: /^\s*[\(\（]?(Select All|Chọn tất cả|Tất cả)[\)\）]?\s*$/i
+      }).first();
+      if (await selectAllItem.isVisible().catch(() => false)) {
+        const selectAllCheckbox = selectAllItem.locator('.dx-checkbox, input[type="checkbox"]').first();
+        if (await selectAllCheckbox.isVisible().catch(() => false)) {
+          const isChecked = (await selectAllCheckbox.getAttribute('aria-checked').catch(() => null)) === 'true'
+            || (await selectAllCheckbox.locator('.dx-checkbox-checked').count().catch(() => 0)) > 0;
+          if (isChecked) await selectAllCheckbox.click();
+        } else {
+          await selectAllItem.click();
+        }
+        await page.waitForTimeout(150);
+      }
+
       for (const targetVal of filterVals) {
+        // Clear search box and type the value
         const searchInput = popup.locator('input.dx-texteditor-input, input[placeholder*="Search"], input[type="text"]').first();
         if (await searchInput.isVisible().catch(() => false)) {
           await searchInput.fill('');
           await searchInput.fill(targetVal);
-          await page.waitForTimeout(200);
+          await page.waitForTimeout(250);
         }
 
         const listItem = popup.locator('.dx-list-item, .dx-item').filter({ hasText: targetVal }).first();
@@ -222,9 +252,9 @@ export async function setGridFilter(
         await okBtn.click();
       }
 
-      // Wait for popup and loadpanel to hide
+      // Wait for popup and loadpanel to hide, then wait for loading wave to complete
       await popup.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => null);
-      await page.waitForSelector('.dx-loadpanel:visible', { state: 'hidden', timeout: 5000 }).catch(() => null);
+      await page.waitForSelector('.dx-loadpanel:visible', { state: 'hidden', timeout: 25000 }).catch(() => null);
       await page.waitForTimeout(300);
 
       return true;
@@ -234,6 +264,96 @@ export async function setGridFilter(
   }
 
   return false;
+}
+
+/**
+ * Tier-2 Filter: Post-download Excel integrity enforcement.
+ * Removes rows that don't match the specified filter criteria.
+ * This is a safety net to guarantee exported data matches the requested filters
+ * regardless of whether the in-app grid filters were applied correctly.
+ */
+export async function enforceExcelFilterIntegrity(
+  filePath: string,
+  filterSpec: { stores?: string[]; slocs?: string[]; items?: string[] }
+): Promise<{ rowCount: number; filtered: boolean }> {
+  const hasStoreFilter = (filterSpec.stores?.length ?? 0) > 0;
+  const hasSlocFilter = (filterSpec.slocs?.length ?? 0) > 0;
+  const hasItemFilter = (filterSpec.items?.length ?? 0) > 0;
+
+  if (!hasStoreFilter && !hasSlocFilter && !hasItemFilter) {
+    return { rowCount: -1, filtered: false };
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) return { rowCount: 0, filtered: false };
+
+  // Find header row (row 1) and locate relevant column indices
+  const headerRow = worksheet.getRow(1);
+  let storeColIdx = -1;
+  let slocColIdx = -1;
+  let itemCodeColIdx = -1;
+  let itemNameColIdx = -1;
+
+  headerRow.eachCell((cell, colNumber) => {
+    const header = String(cell.value ?? '').trim().toLowerCase();
+    if (['store id', 'storeid', 'cửa hàng'].includes(header)) storeColIdx = colNumber;
+    else if (['sloc id', 'slocid', 'mã kho'].includes(header)) slocColIdx = colNumber;
+    else if (['item code', 'itemcode', 'mã hàng'].includes(header)) itemCodeColIdx = colNumber;
+    else if (['item name', 'itemname', 'tên hàng'].includes(header)) itemNameColIdx = colNumber;
+  });
+
+  const storeFiltersLC = (filterSpec.stores ?? []).map((s) => s.toLowerCase());
+  const slocFiltersLC = (filterSpec.slocs ?? []).map((s) => s.toLowerCase());
+  const itemFiltersLC = (filterSpec.items ?? []).map((s) => s.toLowerCase());
+
+  // Collect row numbers to delete (iterate in reverse to preserve indices)
+  const rowsToDelete: number[] = [];
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
+
+    const getCellVal = (colIdx: number): string =>
+      colIdx > 0 ? String(row.getCell(colIdx).value ?? '').trim().toLowerCase() : '';
+
+    const storeVal = getCellVal(storeColIdx);
+    const slocVal = getCellVal(slocColIdx);
+    const itemCodeVal = getCellVal(itemCodeColIdx);
+    const itemNameVal = getCellVal(itemNameColIdx);
+
+    let keep = true;
+
+    if (hasStoreFilter && storeColIdx > 0) {
+      const matches = storeFiltersLC.some((f) => storeVal.includes(f));
+      if (!matches) keep = false;
+    }
+
+    if (keep && hasSlocFilter && slocColIdx > 0) {
+      const matches = slocFiltersLC.some((f) => slocVal.includes(f));
+      if (!matches) keep = false;
+    }
+
+    if (keep && hasItemFilter && (itemCodeColIdx > 0 || itemNameColIdx > 0)) {
+      const matches = itemFiltersLC.some((f) =>
+        (itemCodeColIdx > 0 && itemCodeVal.includes(f)) ||
+        (itemNameColIdx > 0 && itemNameVal.includes(f))
+      );
+      if (!matches) keep = false;
+    }
+
+    if (!keep) rowsToDelete.push(rowNumber);
+  });
+
+  // Delete rows in reverse order to keep indices stable
+  for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+    worksheet.spliceRows(rowsToDelete[i], 1);
+  }
+
+  await workbook.xlsx.writeFile(filePath);
+
+  const remainingRows = worksheet.rowCount > 1 ? worksheet.rowCount - 1 : 0;
+  return { rowCount: remainingRows, filtered: true };
 }
 
 export class POSAdapter {
@@ -562,6 +682,9 @@ export class POSAdapter {
           const buf = Buffer.from(base64Data, 'base64');
           if (buf.length > 500) {
             writeFileSync(tempPath, buf);
+            await enforceExcelFilterIntegrity(tempPath, {
+              stores: parseFilterValues(options.storeFilter),
+            }).catch(() => null);
             return {
               reportType: 'SALES',
               suggestedFilename: tempFilename,
@@ -580,6 +703,9 @@ export class POSAdapter {
         const buf = await resp.body();
         if (buf.length > 500) {
           writeFileSync(tempPath, buf);
+          await enforceExcelFilterIntegrity(tempPath, {
+            stores: parseFilterValues(options.storeFilter),
+          }).catch(() => null);
           return {
             reportType: 'SALES',
             suggestedFilename: tempFilename,
@@ -597,6 +723,9 @@ export class POSAdapter {
     if (download) {
       try {
         await download.saveAs(tempPath);
+        await enforceExcelFilterIntegrity(tempPath, {
+          stores: parseFilterValues(options.storeFilter),
+        }).catch(() => null);
         return {
           reportType: 'SALES',
           suggestedFilename: tempFilename,
@@ -610,6 +739,9 @@ export class POSAdapter {
 
     // If file was written via response, check if it exists
     if (existsSync(tempPath)) {
+      await enforceExcelFilterIntegrity(tempPath, {
+        stores: parseFilterValues(options.storeFilter),
+      }).catch(() => null);
       return {
         reportType: 'SALES',
         suggestedFilename: tempFilename,
@@ -705,8 +837,9 @@ export class POSAdapter {
       });
     }
 
-    if (options.itemFilter && options.itemFilter.trim()) {
-      await this.setGridFilter(page, 'itemCode', options.itemFilter.trim()).catch((err) => {
+    const parsedItems = parseFilterValues(options.itemFilter);
+    if (parsedItems.length) {
+      await this.setGridFilter(page, 'itemCode', parsedItems).catch((err) => {
         console.warn('Grid filter itemCode note:', (err as Error).message);
       });
     }
@@ -833,11 +966,12 @@ export class POSAdapter {
         }
 
         // Apply Item / Sản phẩm filter
-        if (options.itemFilter && options.itemFilter.trim()) {
-          const item = options.itemFilter.trim().toLowerCase();
+        if (parsedItems.length > 0) {
           items = items.filter((it: any) =>
-            String(it.itemCode || '').toLowerCase().includes(item) ||
-            String(it.itemName || '').toLowerCase().includes(item)
+            parsedItems.some((item) =>
+              String(it.itemCode || '').toLowerCase().includes(item.toLowerCase()) ||
+              String(it.itemName || '').toLowerCase().includes(item.toLowerCase())
+            )
           );
         }
         
