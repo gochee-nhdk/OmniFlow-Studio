@@ -130,6 +130,9 @@ namespace OmniFlowStudio
                 psi.EnvironmentVariables["OMNIFLOW_PORTABLE"] = "true";
                 psi.EnvironmentVariables["PORTABLE_EXECUTABLE_DIR"] = portableDir;
 
+                // Ensure Desktop shortcut exists for 1-click convenience
+                EnsureDesktopShortcut(appDir, electronExe);
+
                 Process.Start(psi);
             }
             catch (Exception ex)
@@ -280,6 +283,76 @@ namespace OmniFlowStudio
             }
 
             return false;
+        }
+
+        private static void EnsureDesktopShortcut(string appDir, string electronExe)
+        {
+            try
+            {
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                if (string.IsNullOrEmpty(desktopPath) || !Directory.Exists(desktopPath))
+                {
+                    return;
+                }
+
+                string shortcutPath = Path.Combine(desktopPath, "OmniFlow Studio.lnk");
+                string currentExe = null;
+                try
+                {
+                    if (Process.GetCurrentProcess().MainModule != null)
+                    {
+                        currentExe = Process.GetCurrentProcess().MainModule.FileName;
+                    }
+                }
+                catch { }
+
+                if (string.IsNullOrEmpty(currentExe) || !File.Exists(currentExe))
+                {
+                    currentExe = Path.Combine(appDir, "OmniFlow Studio.exe");
+                }
+
+                string workDir = Path.GetFullPath(appDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string iconPath = Path.Combine(appDir, @"assets\app-icon.ico");
+                if (!File.Exists(iconPath))
+                {
+                    iconPath = Path.Combine(appDir, @"OmniFlow-Studio\assets\app-icon.ico");
+                }
+                if (!File.Exists(iconPath))
+                {
+                    iconPath = currentExe;
+                }
+
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                if (shellType == null) return;
+
+                object shell = Activator.CreateInstance(shellType);
+                object shortcut = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { shortcutPath });
+                if (shortcut == null) return;
+
+                Type shortcutType = shortcut.GetType();
+                string existingTarget = shortcutType.InvokeMember("TargetPath", System.Reflection.BindingFlags.GetProperty, null, shortcut, null) as string;
+
+                if (File.Exists(shortcutPath) && !string.IsNullOrEmpty(existingTarget))
+                {
+                    if (string.Equals(Path.GetFullPath(existingTarget), Path.GetFullPath(currentExe), StringComparison.OrdinalIgnoreCase))
+                    {
+                        return; // Shortcut already points to this executable
+                    }
+                }
+
+                shortcutType.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { currentExe });
+                shortcutType.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { workDir });
+                shortcutType.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { "OmniFlow Studio" });
+                if (File.Exists(iconPath))
+                {
+                    shortcutType.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty, null, shortcut, new object[] { iconPath + ",0" });
+                }
+                shortcutType.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
+            }
+            catch
+            {
+                // Fail-safe: shortcut creation must never block app launch
+            }
         }
     }
 }

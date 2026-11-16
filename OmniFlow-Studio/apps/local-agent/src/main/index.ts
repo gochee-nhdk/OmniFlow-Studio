@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import { join, resolve, dirname } from 'path';
 import { mkdirSync, appendFileSync, existsSync } from 'fs';
+import { exec } from 'child_process';
 import { LogRedactor } from '@fm/security';
 import { registerAll, shutdownAutomationBrowser } from './ipc/index';
 
@@ -176,10 +177,67 @@ function createWindow(): void {
   });
 }
 
+export function ensureDesktopShortcut(): void {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const desktopPath = app.getPath('desktop');
+    const shortcutPath = join(desktopPath, 'OmniFlow Studio.lnk');
+
+    // Target executable: prefer PORTABLE_EXECUTABLE_DIR/OmniFlow Studio.exe if available, else process.execPath
+    let targetExe = process.execPath;
+    if (process.env.PORTABLE_EXECUTABLE_DIR) {
+      const launcherExe = join(process.env.PORTABLE_EXECUTABLE_DIR, 'OmniFlow Studio.exe');
+      if (existsSync(launcherExe)) {
+        targetExe = launcherExe;
+      }
+    } else {
+      const candidateLauncher = join(dirname(process.execPath), 'OmniFlow Studio.exe');
+      if (existsSync(candidateLauncher)) {
+        targetExe = candidateLauncher;
+      } else {
+        const cwdLauncher = join(process.cwd(), 'OmniFlow Studio.exe');
+        if (existsSync(cwdLauncher)) {
+          targetExe = cwdLauncher;
+        }
+      }
+    }
+
+    const workingDir = dirname(targetExe);
+    const iconCandidate = join(__dirname, '../../../../assets/app-icon.ico');
+    const iconPath = existsSync(iconCandidate) ? iconCandidate : targetExe;
+
+    let shortcutCreated = false;
+    try {
+      const op = existsSync(shortcutPath) ? 'replace' : 'create';
+      shortcutCreated = shell.writeShortcutLink(shortcutPath, op, {
+        target: targetExe,
+        cwd: workingDir,
+        description: 'OmniFlow Studio — Enterprise ERP & POS Automation Platform',
+        icon: iconPath,
+        appUserModelId: 'com.omniflow.studio',
+      });
+    } catch {
+      shortcutCreated = false;
+    }
+
+    if (!shortcutCreated) {
+      const psScript = `$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('${shortcutPath.replace(/'/g, "''")}'); $s.TargetPath = '${targetExe.replace(/'/g, "''")}'; $s.WorkingDirectory = '${workingDir.replace(/'/g, "''")}'; $s.Description = 'OmniFlow Studio — Enterprise ERP & POS Automation Platform'; $s.IconLocation = '${iconPath.replace(/'/g, "''")},0'; $s.Save();`;
+      exec(`powershell -NoProfile -NonInteractive -Command "${psScript}"`, (err) => {
+        if (err) log(`PowerShell shortcut fallback error: ${err.message}`);
+      });
+    }
+    log(`Desktop shortcut ensured: ${shortcutPath} -> ${targetExe}`);
+  } catch (err: any) {
+    log(`Failed to create desktop shortcut: ${err?.message || err}`);
+  }
+}
+
 app.whenReady().then(() => {
   log('app.whenReady fired');
   try {
     ensureDataDir();
+    ensureDesktopShortcut();
     log(`Registering IPC handlers with DB_PATH: ${DB_PATH}`);
     registerAll(DB_PATH);
     log('IPC handlers registered successfully');

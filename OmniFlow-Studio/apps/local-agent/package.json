@@ -41,6 +41,16 @@
                                                         ]
                                          }
                                      ],
+                  "extraFiles":  [
+                                     {
+                                         "from":  "../../Tạo-Phím-Tắt-Desktop.cmd",
+                                         "to":  "Tạo-Phím-Tắt-Desktop.cmd"
+                                     },
+                                     {
+                                         "from":  "../../scripts/create-desktop-shortcut.ps1",
+                                         "to":  "scripts/create-desktop-shortcut.ps1"
+                                     }
+                                 ],
                   "win":  {
                               "target":  [
                                              "nsis",
