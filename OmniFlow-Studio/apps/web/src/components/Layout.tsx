@@ -1,11 +1,12 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import {
-  LayoutDashboard, ShoppingCart, Server, Clock, AlertTriangle, Settings, Building2, ChevronRight, CheckCircle2, AlertCircle, X, Square, LoaderCircle
+  LayoutDashboard, ShoppingCart, Server, Clock, AlertTriangle, Settings, Building2, ChevronRight, CheckCircle2, AlertCircle, X, Square, LoaderCircle, Globe
 } from 'lucide-react';
 import { useAgentStore } from '../store/agentStore';
 import { useEnterpriseStore } from '../store/enterpriseStore';
 import { useEffect, useState } from 'react';
 import EnterpriseProfilesModal from './EnterpriseProfilesModal';
+import { invoke } from '../lib/ipc';
 
 export default function Layout() {
   const { refreshStatus, checkNetwork, errors, networkFeedback, dismissNetworkFeedback, isLoading, isStopping, activeProgress, stopWorkflow } = useAgentStore();
@@ -119,6 +120,26 @@ export default function Layout() {
             <span className="text-[10px] font-mono text-slate-500 bg-white border border-slate-200 px-1 py-0.5 rounded ml-1 flex-shrink-0">
               {activeProfile?.code || 'DEF'}
             </span>
+          </button>
+
+          {/* Quick Browser CDP Attach Button */}
+          <button
+            onClick={async () => {
+              try {
+                const res = await invoke<{ success: boolean; message?: string; error?: string }>('browser:enable-active-attach');
+                alert(res?.message || 'Đã kích hoạt chế độ gắn kết trình duyệt cổng 9222.');
+              } catch (e: any) {
+                alert('Lỗi kết nối trình duyệt: ' + (e?.message || e));
+              }
+            }}
+            className="w-full mt-2 p-1.5 rounded-md bg-blue-50 border border-blue-200 hover:bg-blue-100 text-left transition-colors cursor-pointer flex items-center justify-between text-blue-700"
+            title="Khởi chạy trình duyệt với cổng debug 9222 để gắn kết trực tiếp phiên làm việc"
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Globe className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+              <div className="truncate text-[11px] font-medium">Gắn vào Trình duyệt Đang Mở</div>
+            </div>
+            <span className="text-[9px] font-mono bg-blue-100 text-blue-800 px-1 py-0.5 rounded">CDP 9222</span>
           </button>
         </div>
 

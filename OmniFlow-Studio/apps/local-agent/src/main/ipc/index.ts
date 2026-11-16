@@ -187,6 +187,23 @@ function registerAgentHandlers(): void {
       browserReady: Boolean(browserManager),
     };
   });
+
+  ipcMain.handle('browser:enable-active-attach', async () => {
+    try {
+      const { exec } = await import('child_process');
+      let channel = 'msedge';
+      try {
+        const { execSync } = await import('child_process');
+        const regOut = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice" /v ProgId', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        if (/ChromeHTML/i.test(regOut)) channel = 'chrome';
+      } catch {}
+      const exe = channel === 'chrome' ? 'chrome.exe' : 'msedge.exe';
+      exec(`start ${exe} --remote-debugging-port=9222 --restore-last-session`);
+      return { success: true, message: `Đã kích hoạt chế độ gắn kết trình duyệt (${exe}) cổng 9222.` };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
 }
 
 function registerWorkflowHandlers(): void {

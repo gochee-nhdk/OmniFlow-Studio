@@ -129,7 +129,7 @@ export class BrowserManager {
       ignoreHTTPSErrors: true,
       locale: 'vi-VN',
       timezoneId: 'Asia/Ho_Chi_Minh',
-      args: ['--start-maximized', '--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+      args: ['--remote-debugging-port=9222', '--start-maximized', '--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
     };
     const preferred = this.detectSystemDefaultBrowser().channel;
     const candidates: Array<'chrome' | 'msedge' | undefined> = [preferred, preferred === 'msedge' ? 'chrome' : 'msedge', undefined];

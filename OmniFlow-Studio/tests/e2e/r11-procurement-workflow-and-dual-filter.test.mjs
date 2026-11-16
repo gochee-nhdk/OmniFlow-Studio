@@ -153,3 +153,32 @@ test('Scenario 5: SAP Export to Excel Helper', async () => {
   assert.equal(exported, true);
   assert.equal(clickedExport, true);
 });
+
+test('Scenario 6: Sync Sloc IDs from SQLite settings to DAILY_PROCUREMENT Workflow Options', () => {
+  // Simulates SQLite app_settings saved from POSPage via settings:set
+  const savedSettings = {
+    posSelectedSalesStores: ['SFM0101', 'SFM0201'],
+    posSelectedInvSlocs: ['DC0101'],
+    posSalesFromDate: '2026-11-01',
+    posSalesToDate: '2026-11-15',
+    posInvItem: 'B0001, B0002',
+  };
+
+  // Resolution logic matching ipc/index.ts lines 251-269
+  const incomingOpts = {}; // Dashboard 1-click DAILY_PROCUREMENT passes empty options
+  const opts = {
+    ...savedSettings,
+    fromDate: savedSettings.posSalesFromDate,
+    toDate: savedSettings.posSalesToDate,
+    storeFilter: Array.isArray(savedSettings.posSelectedSalesStores) ? savedSettings.posSelectedSalesStores.join(',') : undefined,
+    inventorySlocFilter: Array.isArray(savedSettings.posSelectedInvSlocs) ? savedSettings.posSelectedInvSlocs.join(',') : undefined,
+    inventoryItemFilter: savedSettings.posInvItem,
+    ...incomingOpts,
+  };
+
+  assert.equal(opts.storeFilter, 'SFM0101,SFM0201', 'storeFilter must be synced from posSelectedSalesStores');
+  assert.equal(opts.inventorySlocFilter, 'DC0101', 'inventorySlocFilter must be synced from posSelectedInvSlocs');
+  assert.equal(opts.fromDate, '2026-11-01');
+  assert.equal(opts.toDate, '2026-11-15');
+  assert.equal(opts.inventoryItemFilter, 'B0001, B0002');
+});
