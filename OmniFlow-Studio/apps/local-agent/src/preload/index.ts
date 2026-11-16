@@ -31,6 +31,8 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>([
   'enterprise:delete',
   'enterprise:setActive',
   'enterprise:get-active',
+  'vault:export',
+  'vault:import',
 ]);
 
 // Whitelist of strictly permitted incoming event channels

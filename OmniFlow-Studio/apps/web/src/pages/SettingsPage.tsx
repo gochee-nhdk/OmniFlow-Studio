@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { HardDrive, Shield, ExternalLink, Building2, Plus, Check, Edit3, Sparkles, RefreshCw, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
+import { HardDrive, Shield, ExternalLink, Building2, Plus, Check, Edit3, Sparkles, RefreshCw, CheckCircle2, XCircle, AlertCircle, Clock, Lock, Download, Upload, ShieldCheck, KeyRound, AlertTriangle, FileArchive, X } from 'lucide-react';
 import { invoke } from '../lib/ipc';
 import { useEnterpriseStore } from '../store/enterpriseStore';
 import EnterpriseProfilesModal from '../components/EnterpriseProfilesModal';
@@ -23,7 +23,7 @@ const DEFAULT_SERVICES = [
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'storage' | 'network' | 'enterprise'>('storage');
+  const [activeTab, setActiveTab] = useState<'storage' | 'network' | 'enterprise' | 'vault'>('storage');
   const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
   const { profiles, activeProfileId, setActiveProfile } = useEnterpriseStore();
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
@@ -135,6 +135,157 @@ export default function SettingsPage() {
     }
   };
 
+  // Encrypted Vault Disaster Recovery state
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportPassphrase, setExportPassphrase] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ success: boolean; message: string; filePath?: string; stats?: any } | null>(null);
+
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ success: boolean; message: string; stats?: any } | null>(null);
+
+  const handleExportVault = async () => {
+    if (!exportPassphrase.trim()) {
+      setExportResult({ success: false, message: 'Vui lòng nhập mật khẩu bảo vệ bản sao lưu.' });
+      return;
+    }
+    setIsExporting(true);
+    setExportResult(null);
+    try {
+      const res = await invoke<any>('vault:export', {
+        passphrase: exportPassphrase,
+        saveToFile: true,
+      });
+      if (res && res.success) {
+        setExportResult({
+          success: true,
+          message: res.filePath
+            ? `Xuất bản sao lưu thành công! Đã lưu tại: ${res.filePath}`
+            : 'Xuất bản sao lưu thành công (đã lưu bản sao lưu snapshot cục bộ).',
+          filePath: res.filePath || res.snapshotPath,
+          stats: res.stats,
+        });
+        setExportPassphrase('');
+      } else {
+        setExportResult({
+          success: false,
+          message: res?.error || 'Không thể tạo bản sao lưu.',
+        });
+      }
+    } catch (err: any) {
+      setExportResult({
+        success: false,
+        message: err.message || 'Lỗi khi xuất bản sao lưu.',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImportVault = async () => {
+    if (!importPassphrase.trim()) {
+      setImportResult({ success: false, message: 'Vui lòng nhập mật khẩu giải mã bản sao lưu.' });
+      return;
+    }
+    setIsImporting(true);
+    setImportResult(null);
+    try {
+      const res = await invoke<any>('vault:import', {
+        passphrase: importPassphrase,
+        selectFile: true,
+      });
+      if (res && res.success) {
+        setImportResult({
+          success: true,
+          message: `Khôi phục dữ liệu thành công! Đã khôi phục ${res.stats?.restoredSettings ?? 0} cấu hình, ${res.stats?.restoredProfiles ?? 0} hồ sơ doanh nghiệp và ${res.stats?.restoredCredentials ?? 0} tài khoản.`,
+          stats: res.stats,
+        });
+        setImportPassphrase('');
+        useEnterpriseStore.getState().loadProfiles().catch(() => null);
+      } else if (res && res.cancelled) {
+        setImportResult(null);
+      } else {
+        setImportResult({
+          success: false,
+          message: res?.error || 'Mật khẩu sai hoặc tập tin sao lưu bị lỗi/thay đổi.',
+        });
+      }
+    } catch (err: any) {
+      setImportResult({
+        success: false,
+        message: err.message || 'Lỗi khi khôi phục dữ liệu (mật khẩu không đúng hoặc dữ liệu bị chỉnh sửa).',
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const renderVaultSection = () => (
+    <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
+        <div>
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-emerald-600" />
+            An Toàn Dữ Liệu Cá Nhân &amp; Khôi Phục Thảm Họa (Disaster Recovery Vault)
+          </h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Mã hóa và đóng gói toàn bộ cấu hình, hồ sơ doanh nghiệp và thông tin xác thực vào tập tin bảo mật duy nhất (.ofvault)
+          </p>
+        </div>
+      </div>
+
+      <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl text-xs text-slate-700 flex items-start gap-3">
+        <Lock className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="font-semibold text-emerald-950">
+            Dữ liệu lưu 100% trên máy tính cá nhân, có thể lưu file .ofvault lên USB/Google Drive để khôi phục trong 1 giây nếu cài lại Windows/reset trắng máy.
+          </p>
+          <p className="text-slate-600 text-[11px]">
+            Hệ thống sử dụng chuẩn mã hóa cấp quân sự AES-256-GCM kết hợp hàm băm Scrypt sinh khóa từ mật khẩu bảo vệ của bạn. Không ai kể cả nhà phát triển có thể mở được file sao lưu nếu không có mật khẩu.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all space-y-3">
+          <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+            <Download className="w-4 h-4 text-emerald-600" />
+            Sao lưu dữ liệu ra file
+          </div>
+          <p className="text-xs text-slate-500">
+            Tạo tập tin sao lưu mã hóa chứa tất cả cài đặt hệ thống, hồ sơ ERP và thông tin tài khoản được bảo vệ bằng mật khẩu riêng.
+          </p>
+          <button
+            onClick={() => { setIsExportModalOpen(true); setExportResult(null); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-xs transition-colors cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            Xuất Bản Sao Lưu Mã Hóa (.ofvault)
+          </button>
+        </div>
+
+        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 transition-all space-y-3">
+          <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+            <Upload className="w-4 h-4 text-blue-600" />
+            Phục hồi dữ liệu từ file
+          </div>
+          <p className="text-xs text-slate-500">
+            Khôi phục tức thì toàn bộ cấu hình hoạt động từ tập tin <code className="text-blue-700 font-bold">.ofvault</code> đã xuất trước đó.
+          </p>
+          <button
+            onClick={() => { setIsImportModalOpen(true); setImportResult(null); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-xs transition-colors cursor-pointer"
+          >
+            <Upload className="w-4 h-4" />
+            Khôi Phục Dữ Liệu Từ Bản Sao Lưu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-8 space-y-8 max-w-5xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -155,6 +306,7 @@ export default function SettingsPage() {
           { id: 'storage', label: 'Thư mục & Lưu trữ', icon: HardDrive },
           { id: 'enterprise', label: 'Hồ sơ Đa Doanh nghiệp', icon: Building2 },
           { id: 'network', label: 'Hạ tầng mạng & Kết nối', icon: Shield },
+          { id: 'vault', label: 'An Toàn Dữ Liệu & Khôi Phục', icon: ShieldCheck },
         ].map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -208,6 +360,15 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
+
+          {renderVaultSection()}
+        </div>
+      )}
+
+      {/* Vault Tab */}
+      {activeTab === 'vault' && (
+        <div className="space-y-6">
+          {renderVaultSection()}
         </div>
       )}
 
@@ -411,6 +572,166 @@ export default function SettingsPage() {
         isOpen={isProfilesModalOpen}
         onClose={() => setIsProfilesModalOpen(false)}
       />
+
+      {/* Export Vault Modal */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Download className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-slate-900 text-sm">Xuất Bản Sao Lưu Mã Hóa (.ofvault)</h3>
+              </div>
+              <button
+                onClick={() => { setIsExportModalOpen(false); setExportResult(null); }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="text-xs text-slate-600">
+                Nhập mật khẩu an toàn để khóa bản sao lưu. Bạn sẽ cần mật khẩu này để khôi phục dữ liệu sau này.
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
+                  Mật khẩu bảo vệ bản sao lưu:
+                </label>
+                <input
+                  type="password"
+                  placeholder="Nhập mật khẩu bảo vệ..."
+                  value={exportPassphrase}
+                  onChange={(e) => setExportPassphrase(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleExportVault(); }}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                  autoFocus
+                />
+              </div>
+
+              {exportResult && (
+                <div
+                  className={`p-3 rounded-lg text-xs flex items-start gap-2 ${
+                    exportResult.success
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {exportResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="break-all">{exportResult.message}</div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setIsExportModalOpen(false); setExportResult(null); }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  {exportResult?.success ? 'Đóng' : 'Hủy'}
+                </button>
+                {!exportResult?.success && (
+                  <button
+                    type="button"
+                    onClick={handleExportVault}
+                    disabled={isExporting}
+                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isExporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                    {isExporting ? 'Đang tạo bản sao lưu...' : 'Xác nhận xuất (.ofvault)'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Vault Modal */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Upload className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-sm">Khôi Phục Dữ Liệu Từ Bản Sao Lưu</h3>
+              </div>
+              <button
+                onClick={() => { setIsImportModalOpen(false); setImportResult(null); }}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="text-xs text-slate-600">
+                Nhập mật khẩu đã dùng khi xuất file sao lưu để giải mã và phục hồi hệ thống.
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                  Mật khẩu giải mã bản sao lưu:
+                </label>
+                <input
+                  type="password"
+                  placeholder="Nhập mật khẩu giải mã..."
+                  value={importPassphrase}
+                  onChange={(e) => setImportPassphrase(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleImportVault(); }}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                  autoFocus
+                />
+              </div>
+
+              {importResult && (
+                <div
+                  className={`p-3 rounded-lg text-xs flex items-start gap-2 ${
+                    importResult.success
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {importResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="break-all">{importResult.message}</div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setIsImportModalOpen(false); setImportResult(null); }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  {importResult?.success ? 'Đóng' : 'Hủy'}
+                </button>
+                {!importResult?.success && (
+                  <button
+                    type="button"
+                    onClick={handleImportVault}
+                    disabled={isImporting}
+                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isImporting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                    {isImporting ? 'Đang giải mã...' : 'Chọn file .ofvault & Khôi phục'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

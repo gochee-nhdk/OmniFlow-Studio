@@ -129,6 +129,9 @@ function createWindow(): void {
     show: true, // Visible immediately — never hidden
   });
 
+  // Always open maximized immediately
+  mainWindow.maximize();
+
   const candidates = [
     join(__dirname, '../../../web/dist/index.html'),
     join(__dirname, '../../web/dist/index.html'),
@@ -160,7 +163,8 @@ function createWindow(): void {
   mainWindow.focus();
 
   mainWindow.once('ready-to-show', () => {
-    log('ready-to-show event fired: showing window');
+    log('ready-to-show event fired: maximizing and showing window');
+    mainWindow?.maximize();
     mainWindow?.show();
     mainWindow?.focus();
   });

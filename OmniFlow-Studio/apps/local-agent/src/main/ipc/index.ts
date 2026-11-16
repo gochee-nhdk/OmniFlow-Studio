@@ -1,6 +1,6 @@
 import { app, ipcMain, shell, dialog, safeStorage } from 'electron';
 import { FMDatabase } from '@fm/database';
-import { credentialManager, SecureStorage } from '@fm/security';
+import { credentialManager, SecureStorage, createEncryptedVault, restoreEncryptedVault } from '@fm/security';
 import { BrowserManager } from '@fm/browser-engine';
 import { POSAdapter, parseFilterValues } from '@fm/pos-adapter';
 import { SAPAdapter } from '@fm/sap-adapter';
@@ -106,7 +106,7 @@ export function registerAll(dbPath: string): void {
     downloadDir: tempDownloadDir,
     userDataDir: portableDataDir,
     headless: false,
-    allowCdpAttach: true,
+    allowCdpAttach: false,
     cdpPorts: [9222, 9223, 9229],
   });
 
@@ -118,6 +118,7 @@ export function registerAll(dbPath: string): void {
   registerFileHandlers();
   registerErrorHandlers();
   registerEnterpriseHandlers();
+  registerVaultHandlers();
 }
 
 export async function shutdownAutomationBrowser(): Promise<void> {
@@ -961,5 +962,257 @@ function registerErrorHandlers(): void {
   ipcMain.handle('errors:clear', async () => {
     db?.clearErrors();
     return { cleared: true };
+  });
+}
+
+function registerVaultHandlers(): void {
+  ipcMain.handle('vault:export', async (_event, payload?: string | {
+    passphrase?: string;
+    saveToFile?: boolean;
+    targetPath?: string;
+  }) => {
+    if (!db) throw new Error('Database not initialized');
+    const passphrase = (typeof payload === 'string' ? payload : payload?.passphrase)?.trim();
+    if (!passphrase) {
+      throw new Error('Mật khẩu bảo vệ vault không được để trống');
+    }
+
+    const userData = process.env.APP_DATA_DIR || app.getPath('userData');
+    const backupsDir = path.join(userData, 'backups');
+    try {
+      fs.mkdirSync(backupsDir, { recursive: true });
+    } catch {}
+
+    // 1. Gather all settings & enterprise profiles
+    const allSettings = db.getAllSettings();
+    const enterpriseProfiles = getEnterpriseProfiles();
+    const activeEnterpriseId = db.getSetting('active_enterprise_id') || enterpriseProfiles.find((p) => p.isActive)?.id || '';
+
+    // 2. Gather credentials (metadata + decryptable password payload for portable cross-machine restoration)
+    const credMetas = db.listCredentialMeta();
+    const credentials: Array<{
+      accountName: string;
+      username: string;
+      application?: string;
+      url?: string;
+      password?: string;
+      encryptedLocal?: string;
+    }> = [];
+
+    for (const meta of credMetas) {
+      const acc = meta.accountName || (meta as any).account_name;
+      let pwd = '';
+      try {
+        pwd = (await credentialManager.getPassword(acc)) || '';
+      } catch {}
+      if (!pwd) {
+        const cached = db.getSetting(`cred_${acc}`);
+        if (cached) {
+          try {
+            pwd = decryptLocalCredential(cached);
+          } catch {}
+        }
+      }
+      credentials.push({
+        accountName: acc,
+        username: meta.username || '',
+        application: meta.application || '',
+        url: meta.url || '',
+        password: pwd || undefined,
+        encryptedLocal: db.getSetting(`cred_${acc}`) || undefined,
+      });
+    }
+
+    // Include any standalone cred_* in allSettings if not already in credMetas
+    for (const [key, value] of Object.entries(allSettings)) {
+      if (key.startsWith('cred_')) {
+        const acc = key.slice(5);
+        if (!credentials.some((c) => c.accountName === acc)) {
+          let pwd = '';
+          try {
+            pwd = decryptLocalCredential(value);
+          } catch {}
+          credentials.push({
+            accountName: acc,
+            username: '',
+            password: pwd || undefined,
+            encryptedLocal: value,
+          });
+        }
+      }
+    }
+
+    const vaultPayload = {
+      appName: 'OmniFlow Studio',
+      format: 'OMNIFLOW_VAULT_BACKUP',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      activeEnterpriseId,
+      enterpriseProfiles,
+      settings: allSettings,
+      credentials,
+    };
+
+    const vaultString = createEncryptedVault(vaultPayload, passphrase);
+
+    // Auto-backup snapshot to <userData>/backups/
+    const dateStamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const snapshotFileName = `omniflow-vault-backup-${dateStamp}.ofvault`;
+    const snapshotPath = path.join(backupsDir, snapshotFileName);
+    try {
+      fs.writeFileSync(snapshotPath, vaultString, 'utf8');
+    } catch (err) {
+      console.warn('Auto-backup snapshot write warning:', err);
+    }
+
+    let savedFilePath: string | null = null;
+    const saveToFile = typeof payload === 'object' && payload?.saveToFile;
+    const targetPath = typeof payload === 'object' && payload?.targetPath;
+
+    if (targetPath) {
+      fs.writeFileSync(targetPath, vaultString, 'utf8');
+      savedFilePath = targetPath;
+    } else if (saveToFile) {
+      const saveDialogRes = await dialog.showSaveDialog({
+        title: 'Xuất Bản Sao Lưu Mã Hóa (.ofvault)',
+        defaultPath: path.join(app.getPath('documents') || userData, `OmniFlow_Backup_${dateStamp}.ofvault`),
+        filters: [
+          { name: 'OmniFlow Encrypted Vault', extensions: ['ofvault', 'vault'] },
+          { name: 'Tất cả tập tin', extensions: ['*'] },
+        ],
+      });
+      if (!saveDialogRes.canceled && saveDialogRes.filePath) {
+        fs.writeFileSync(saveDialogRes.filePath, vaultString, 'utf8');
+        savedFilePath = saveDialogRes.filePath;
+      }
+    }
+
+    return {
+      success: true,
+      vaultString,
+      filePath: savedFilePath,
+      snapshotPath,
+      stats: {
+        settingsCount: Object.keys(allSettings).length,
+        profilesCount: enterpriseProfiles.length,
+        credentialsCount: credentials.length,
+      },
+    };
+  });
+
+  ipcMain.handle('vault:import', async (_event, payload?: {
+    passphrase?: string;
+    vaultString?: string;
+    filePath?: string;
+    selectFile?: boolean;
+  } | string) => {
+    if (!db) throw new Error('Database not initialized');
+    let passphrase = '';
+    let vaultString = '';
+    let filePath = '';
+    let selectFile = false;
+
+    if (typeof payload === 'string') {
+      passphrase = payload;
+    } else if (payload && typeof payload === 'object') {
+      passphrase = (payload.passphrase || '').trim();
+      vaultString = payload.vaultString || '';
+      filePath = payload.filePath || '';
+      selectFile = payload.selectFile || false;
+    }
+
+    if (!passphrase) {
+      throw new Error('Mật khẩu giải mã vault không được để trống');
+    }
+
+    if (selectFile || (!vaultString && !filePath)) {
+      const openDialogRes = await dialog.showOpenDialog({
+        title: 'Chọn tập tin sao lưu OmniFlow Vault (.ofvault)',
+        filters: [
+          { name: 'OmniFlow Encrypted Vault', extensions: ['ofvault', 'vault'] },
+          { name: 'Tất cả tập tin', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      });
+      if (openDialogRes.canceled || openDialogRes.filePaths.length === 0) {
+        return { success: false, cancelled: true };
+      }
+      filePath = openDialogRes.filePaths[0];
+    }
+
+    if (filePath && !vaultString) {
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`Tập tin sao lưu không tồn tại: ${filePath}`);
+      }
+      vaultString = fs.readFileSync(filePath, 'utf8').trim();
+    }
+
+    if (!vaultString) {
+      throw new Error('Nội dung tập tin sao lưu trống hoặc không hợp lệ');
+    }
+
+    const decryptedData = restoreEncryptedVault<any>(vaultString, passphrase);
+    if (!decryptedData || typeof decryptedData !== 'object') {
+      throw new Error('Dữ liệu sao lưu không đúng định dạng');
+    }
+
+    let restoredSettings = 0;
+    let restoredProfiles = 0;
+    let restoredCredentials = 0;
+
+    // 1. Restore settings
+    if (decryptedData.settings && typeof decryptedData.settings === 'object') {
+      for (const [k, v] of Object.entries(decryptedData.settings)) {
+        db.setSetting(k, typeof v === 'string' ? v : JSON.stringify(v));
+        restoredSettings++;
+      }
+    }
+
+    // 2. Restore enterprise profiles
+    if (Array.isArray(decryptedData.enterpriseProfiles)) {
+      db.setSetting('enterprise_profiles', JSON.stringify(decryptedData.enterpriseProfiles));
+      restoredProfiles = decryptedData.enterpriseProfiles.length;
+    }
+    if (decryptedData.activeEnterpriseId) {
+      db.setSetting('active_enterprise_id', decryptedData.activeEnterpriseId);
+    }
+
+    // 3. Restore credentials
+    if (Array.isArray(decryptedData.credentials)) {
+      for (const cred of decryptedData.credentials) {
+        if (!cred.accountName) continue;
+        db.upsertCredentialMeta({
+          id: cred.accountName,
+          accountName: cred.accountName,
+          application: cred.application || '',
+          username: cred.username || '',
+          credentialKey: cred.accountName,
+          url: cred.url || '',
+        });
+
+        if (cred.password) {
+          try {
+            await credentialManager.setPassword(cred.accountName, cred.password);
+          } catch {}
+          try {
+            const enc = encryptLocalCredential(cred.password);
+            db.setSetting(`cred_${cred.accountName}`, enc);
+          } catch {}
+        } else if (cred.encryptedLocal) {
+          db.setSetting(`cred_${cred.accountName}`, cred.encryptedLocal);
+        }
+        restoredCredentials++;
+      }
+    }
+
+    return {
+      success: true,
+      restoredFrom: filePath || 'raw-string',
+      stats: {
+        restoredSettings,
+        restoredProfiles,
+        restoredCredentials,
+      },
+    };
   });
 }

@@ -409,3 +409,128 @@ export const ACCOUNT_NAMES = {
 } as const;
 
 export type AccountName = typeof ACCOUNT_NAMES[keyof typeof ACCOUNT_NAMES];
+
+/**
+ * Encrypted Vault Backup & Restore Manager
+ * Implements 100% secure, offline Encrypted Vault Backup & Restore.
+ * Vault string format: OMNIFLOW_VAULT:v1:<salt_b64>:<iv_b64>:<tag_b64>:<ciphertext_b64>
+ */
+export const VAULT_PREFIX = 'OMNIFLOW_VAULT';
+export const VAULT_VERSION = 'v1';
+export const VAULT_SALT_LENGTH = 16;
+export const VAULT_IV_LENGTH = 12;
+export const VAULT_TAG_LENGTH = 16;
+
+export class VaultManager {
+  /**
+   * Creates an encrypted vault string from data and a passphrase.
+   * Format: OMNIFLOW_VAULT:v1:<salt_b64>:<iv_b64>:<tag_b64>:<ciphertext_b64>
+   */
+  static createEncryptedVault(data: object | string, passphrase: string): string {
+    if (!passphrase || typeof passphrase !== 'string') {
+      throw new Error('A valid non-empty passphrase is required to create an encrypted vault');
+    }
+
+    const plaintext = typeof data === 'string' ? data : JSON.stringify(data);
+    const salt = crypto.randomBytes(VAULT_SALT_LENGTH);
+    const iv = crypto.randomBytes(VAULT_IV_LENGTH);
+    const key = crypto.scryptSync(passphrase, salt, 32);
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let ciphertext = cipher.update(plaintext, 'utf8', 'base64');
+    ciphertext += cipher.final('base64');
+    const authTag = cipher.getAuthTag().toString('base64');
+
+    const saltB64 = salt.toString('base64');
+    const ivB64 = iv.toString('base64');
+    const tagB64 = authTag;
+    const ciphertextB64 = ciphertext;
+
+    return `${VAULT_PREFIX}:${VAULT_VERSION}:${saltB64}:${ivB64}:${tagB64}:${ciphertextB64}`;
+  }
+
+  /**
+   * Restores data from an encrypted vault string using the passphrase.
+   * Validates format, derives key using embedded salt, authenticates and decrypts payload.
+   * Returns parsed object if valid JSON, otherwise original plaintext string.
+   */
+  static restoreEncryptedVault<T = any>(vaultString: string, passphrase: string): T {
+    if (typeof vaultString !== 'string') {
+      throw new Error('Vault payload must be a string');
+    }
+    if (!passphrase || typeof passphrase !== 'string') {
+      throw new Error('A valid non-empty passphrase is required to restore an encrypted vault');
+    }
+
+    const parts = vaultString.split(':');
+    if (parts.length !== 6) {
+      throw new Error(`Invalid vault format: expected 6 colon-separated segments, got ${parts.length}`);
+    }
+
+    const [prefix, version, saltB64, ivB64, tagB64, ciphertextB64] = parts;
+
+    if (prefix !== VAULT_PREFIX) {
+      throw new Error(`Invalid vault header: expected ${VAULT_PREFIX}, got ${prefix}`);
+    }
+    if (version !== VAULT_VERSION) {
+      throw new Error(`Unsupported vault version: expected ${VAULT_VERSION}, got ${version}`);
+    }
+
+    const salt = Buffer.from(saltB64, 'base64');
+    const iv = Buffer.from(ivB64, 'base64');
+    const authTag = Buffer.from(tagB64, 'base64');
+    const ciphertext = Buffer.from(ciphertextB64, 'base64');
+
+    if (salt.length !== VAULT_SALT_LENGTH) {
+      throw new Error(`Invalid vault: salt length must be ${VAULT_SALT_LENGTH} bytes, got ${salt.length}`);
+    }
+    if (iv.length !== VAULT_IV_LENGTH) {
+      throw new Error(`Invalid vault: IV length must be ${VAULT_IV_LENGTH} bytes, got ${iv.length}`);
+    }
+    if (authTag.length !== VAULT_TAG_LENGTH) {
+      throw new Error(`Invalid vault: auth tag length must be ${VAULT_TAG_LENGTH} bytes, got ${authTag.length}`);
+    }
+
+    const key = crypto.scryptSync(passphrase, salt, 32);
+
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      let decrypted = decipher.update(ciphertext, undefined, 'utf8');
+      decrypted += decipher.final('utf8');
+
+      try {
+        return JSON.parse(decrypted) as T;
+      } catch {
+        return decrypted as unknown as T;
+      }
+    } catch (err: any) {
+      throw new Error(`Failed to restore encrypted vault: invalid passphrase or corrupted/tampered data (${err.message})`);
+    }
+  }
+
+  /**
+   * Helper to tamper with vault ciphertext for testing authTag verification
+   */
+  static tamperVault(vaultString: string): string {
+    const parts = vaultString.split(':');
+    if (parts.length !== 6) return vaultString;
+    const data = parts[5];
+    const tamperedData = data.length > 2
+      ? data.slice(0, 1) + (data[1] === 'A' ? 'B' : 'A') + data.slice(2)
+      : 'TAMPERED';
+    return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}:${parts[4]}:${tamperedData}`;
+  }
+
+  createEncryptedVault(data: object | string, passphrase: string): string {
+    return VaultManager.createEncryptedVault(data, passphrase);
+  }
+
+  restoreEncryptedVault<T = any>(vaultString: string, passphrase: string): T {
+    return VaultManager.restoreEncryptedVault<T>(vaultString, passphrase);
+  }
+}
+
+export const vaultManager = new VaultManager();
+export const createEncryptedVault = VaultManager.createEncryptedVault.bind(VaultManager);
+export const restoreEncryptedVault = VaultManager.restoreEncryptedVault.bind(VaultManager);

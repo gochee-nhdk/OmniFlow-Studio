@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { SecureStorage, LogRedactor, getOrGenerateMasterKeySync, getSecurityDir, getMasterKeyPath } from '../dist/index.js';
+import {
+  SecureStorage,
+  LogRedactor,
+  getOrGenerateMasterKeySync,
+  getSecurityDir,
+  getMasterKeyPath,
+  VaultManager,
+  createEncryptedVault,
+  restoreEncryptedVault
+} from '../dist/index.js';
 
 test.describe('Package @fm/security - Unit Tests', () => {
   test('SecureStorage: encrypt produces 3-segment base64 format', () => {
@@ -242,5 +251,114 @@ test.describe('Package @fm/security - Unit Tests', () => {
       else delete process.env.PORTABLE_DATA_DIR;
       fs.rmSync(tmpDataDir, { recursive: true, force: true });
     }
+  });
+
+  test('VaultManager: createEncryptedVault generates valid 6-segment OMNIFLOW_VAULT format', () => {
+    const payload = {
+      enterprise: 'OmniFlow Global',
+      profiles: ['admin', 'operator'],
+      settings: { offlineMode: true, syncIntervalMs: 5000 },
+      credentials: [{ service: 'SAP_MAIN', account: 'SYSTEM' }]
+    };
+    const passphrase = 'SuperSecretBackupPassword2026!';
+
+    const vault = createEncryptedVault(payload, passphrase);
+    assert.equal(typeof vault, 'string');
+    assert.ok(vault.startsWith('OMNIFLOW_VAULT:v1:'));
+
+    const parts = vault.split(':');
+    assert.equal(parts.length, 6, 'Vault format must have 6 colon-separated segments');
+    assert.equal(parts[0], 'OMNIFLOW_VAULT');
+    assert.equal(parts[1], 'v1');
+
+    const salt = Buffer.from(parts[2], 'base64');
+    const iv = Buffer.from(parts[3], 'base64');
+    const tag = Buffer.from(parts[4], 'base64');
+    const ciphertext = Buffer.from(parts[5], 'base64');
+
+    assert.equal(salt.length, 16, 'Salt must be 16 bytes');
+    assert.equal(iv.length, 12, 'IV must be 12 bytes');
+    assert.equal(tag.length, 16, 'Tag must be 16 bytes');
+    assert.ok(ciphertext.length > 0, 'Ciphertext must not be empty');
+
+    // Plaintext or passphrase should not leak into output
+    assert.ok(!vault.includes('OmniFlow Global'));
+    assert.ok(!vault.includes(passphrase));
+  });
+
+  test('VaultManager: roundtrip restore successfully recovers complex object payload', () => {
+    const originalData = {
+      version: '2.5.0',
+      databaseDump: {
+        tables: ['tasks', 'credentials', 'audit_logs'],
+        rowCount: 1250,
+      },
+      secrets: {
+        sapToken: 'secret-sap-token-xyz-12345',
+        posPin: '9876'
+      },
+      unicodeNote: 'Đảm bảo sao lưu an toàn tuyệt đối 100% 🔒'
+    };
+    const passphrase = 'MyVaultPassphrase#2026';
+
+    const vault = VaultManager.createEncryptedVault(originalData, passphrase);
+    const restored = VaultManager.restoreEncryptedVault(vault, passphrase);
+
+    assert.deepEqual(restored, originalData);
+    assert.equal(restored.databaseDump.rowCount, 1250);
+    assert.equal(restored.secrets.sapToken, 'secret-sap-token-xyz-12345');
+    assert.equal(restored.unicodeNote, 'Đảm bảo sao lưu an toàn tuyệt đối 100% 🔒');
+  });
+
+  test('VaultManager: roundtrip restore supports raw string data', () => {
+    const rawString = 'Plain text backup payload without JSON wrapper';
+    const passphrase = 'StringVaultPassword2026';
+
+    const vault = createEncryptedVault(rawString, passphrase);
+    const restored = restoreEncryptedVault(rawString ? vault : '', passphrase);
+
+    assert.equal(restored, rawString);
+  });
+
+  test('VaultManager: tampered ciphertext is rejected with error', () => {
+    const payload = { config: 'confidential' };
+    const passphrase = 'ValidPassphrase2026';
+
+    const vault = createEncryptedVault(payload, passphrase);
+    const tampered = VaultManager.tamperVault(vault);
+
+    assert.throws(() => {
+      restoreEncryptedVault(tampered, passphrase);
+    }, /(unable to authenticate data|tampered|corrupted)/i);
+  });
+
+  test('VaultManager: incorrect passphrase throws error', () => {
+    const payload = { critical: 'data' };
+    const correctPassphrase = 'CorrectPassword123';
+    const wrongPassphrase = 'WrongPassword456';
+
+    const vault = createEncryptedVault(payload, correctPassphrase);
+
+    assert.throws(() => {
+      restoreEncryptedVault(vault, wrongPassphrase);
+    }, /(invalid passphrase|unable to authenticate data|corrupted)/i);
+  });
+
+  test('VaultManager: validates inputs and rejects invalid/empty passphrases or malformed formats', () => {
+    assert.throws(() => {
+      createEncryptedVault({ a: 1 }, '');
+    }, /passphrase is required/i);
+
+    assert.throws(() => {
+      createEncryptedVault({ a: 1 }, null);
+    }, /passphrase is required/i);
+
+    assert.throws(() => {
+      restoreEncryptedVault('INVALID_HEADER:v1:abc', 'pass');
+    }, /Invalid vault/i);
+
+    assert.throws(() => {
+      restoreEncryptedVault('OMNIFLOW_VAULT:v2:a:b:c:d', 'pass');
+    }, /Unsupported vault version/i);
   });
 });

@@ -10,7 +10,12 @@ export type BrowserProfile = 'SAP' | 'POS';
 export type BrowserSessionMode = 'not-started' | 'dedicated' | 'attached';
 
 export function getProfileBase(userDataDir?: string): string {
-  const appData = userDataDir || process.env['APP_DATA_DIR'] || process.env['PORTABLE_DATA_DIR'] || process.env['APPDATA'] || process.env['HOME'] || '.';
+  if (userDataDir) return join(userDataDir, 'browser-profiles');
+  if (process.env['APP_DATA_DIR']) return join(process.env['APP_DATA_DIR'], 'browser-profiles');
+  if (process.env['PORTABLE_DATA_DIR']) return join(process.env['PORTABLE_DATA_DIR'], 'browser-profiles');
+  if (process.env['PORTABLE_EXECUTABLE_DIR']) return join(process.env['PORTABLE_EXECUTABLE_DIR'], 'data', 'browser-profiles');
+  if (process.env['OMNIFLOW_PORTABLE_DATA']) return join(process.env['OMNIFLOW_PORTABLE_DATA'], 'browser-profiles');
+  const appData = process.env['APPDATA'] || process.env['HOME'] || '.';
   return join(appData, 'browser-profiles');
 }
 
@@ -42,7 +47,7 @@ export class BrowserManager {
     this.profileBase = getProfileBase(options.userDataDir);
     this.headless = options.headless ?? false;
     this.onProgress = options.onProgress;
-    this.allowCdpAttach = options.allowCdpAttach ?? true;
+    this.allowCdpAttach = options.allowCdpAttach ?? false;
     this.cdpPorts = options.cdpPorts && options.cdpPorts.length > 0 ? options.cdpPorts : [9222, 9223, 9229];
     mkdirSync(this.downloadDir, { recursive: true });
   }

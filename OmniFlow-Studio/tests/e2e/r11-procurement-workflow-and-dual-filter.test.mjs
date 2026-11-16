@@ -15,10 +15,10 @@ import { SecureStorage } from '../../packages/security/dist/index.js';
 
 test('Scenario 1: BrowserManager Default CDP Attach and Graceful Tab Preservation', async () => {
   const tmpDir = path.join(os.tmpdir(), `omniflow-r11-cdp-${Date.now()}`);
-  const bm = new BrowserManager({ downloadDir: tmpDir });
+  const bm = new BrowserManager({ downloadDir: tmpDir, allowCdpAttach: true });
 
-  // Assert default CDP attach is true
-  assert.equal(bm.allowCdpAttach, true, 'allowCdpAttach should default to true');
+  // Assert CDP attach when opted in
+  assert.equal(bm.allowCdpAttach, true, 'allowCdpAttach should be true when opted in');
   assert.deepEqual(bm.cdpPorts, [9222, 9223, 9229], 'cdpPorts should include [9222, 9223, 9229]');
 
   // Verify closeContext behavior when attachedOverCDP is true
