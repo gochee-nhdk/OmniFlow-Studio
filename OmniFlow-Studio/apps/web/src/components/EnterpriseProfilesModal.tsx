@@ -1,23 +1,15 @@
 import React, { useState } from 'react';
 import {
-  Building2, Plus, Check, Edit3, Trash2, X, RefreshCw, FileText,
-  Server, Globe, Database, FolderCheck, CheckCircle2, ChevronRight, FolderOpen
+  Building2, Plus, Check, Edit3, Trash2, X, CheckCircle2, FolderOpen
 } from 'lucide-react';
 import { useEnterpriseStore } from '../store/enterpriseStore';
-import { EnterpriseProfile, ERPType } from '@fm/shared-types';
+import { EnterpriseProfile } from '@fm/shared-types';
 import { invoke } from '../lib/ipc';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
 }
-
-const ERP_OPTIONS: Array<{ value: ERPType; label: string; badgeClass: string; icon: string }> = [
-  { value: 'SAP_B1', label: 'SAP Business One', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200', icon: '🏢' },
-  { value: 'ODOO', label: 'Odoo Enterprise', badgeClass: 'bg-purple-100 text-purple-800 border-purple-200', icon: '🟣' },
-  { value: 'NETSUITE', label: 'Oracle NetSuite', badgeClass: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🟠' },
-  { value: 'CUSTOM_WEB', label: 'Custom Web POS/ERP', badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🌐' },
-];
 
 export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   const { profiles, activeProfileId, setActiveProfile, saveProfile, deleteProfile } = useEnterpriseStore();
@@ -199,7 +191,6 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
               <div className="grid grid-cols-1 gap-3">
                 {profiles.map((p) => {
                   const isActive = p.id === activeProfileId;
-                  const erpBadge = ERP_OPTIONS.find((e) => e.value === p.erpType);
 
                   return (
                     <div
