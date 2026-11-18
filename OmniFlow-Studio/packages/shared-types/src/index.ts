@@ -251,13 +251,14 @@ export interface EnterpriseProfile {
   id: string;
   name: string;
   code: string;
-  erpType: ERPType;
-  erpUrl: string;
+  description?: string;
+  erpType?: ERPType;
+  erpUrl?: string;
   posUrl?: string;
   server?: string;
   database?: string;
-  companyName: string;
-  companySchema: string;
+  companyName?: string;
+  companySchema?: string;
   storeMappings?: Array<{ id: string; name: string }>;
   slocMappings?: Array<{ id: string; name: string }>;
   namingTemplate?: string;
