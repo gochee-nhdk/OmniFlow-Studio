@@ -52,7 +52,7 @@ export default function SAPPage() {
       return false;
     }
   });
-  const [sapTargetModule, setSapTargetModule] = useState<'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN'>(() => (localStorage.getItem('sap_target_module') as any) || 'HOME');
+  const [sapTargetModule, setSapTargetModule] = useState<'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS' | 'QUERY_PRICELIST'>(() => (localStorage.getItem('sap_target_module') as any) || 'HOME');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const sapUrlEditedRef = React.useRef(false);
 
@@ -406,7 +406,7 @@ export default function SAPPage() {
             }} className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded">
               <option value="HOME">Trang chủ SAP</option><option value="PURCHASING_PO">Đơn mua hàng (Purchase Order)</option>
               <option value="PURCHASING_GRPO">Nhập kho (Goods Receipt PO)</option><option value="PURCHASING_RETURN">Trả hàng (Goods Return)</option>
-              <option value="INVENTORY_STATUS">Kiểm tra Tồn kho SAP (Inventory Status)</option>
+              <option value="INVENTORY_STATUS">Kiểm tra Tồn kho SAP (Inventory Status)</option><option value="QUERY_PRICELIST">Xuất Pricelist NCC (Query Manager: Danh sách item ncc pricelist_non_Asset)</option>
             </select>
           </div>
 

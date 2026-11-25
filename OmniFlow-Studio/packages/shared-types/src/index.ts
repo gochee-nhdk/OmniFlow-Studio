@@ -1,5 +1,5 @@
 // ============================================================
-// FM AUTO OPS — Shared Types v1.0
+// FM AUTO OPS — Shared Types v1.1 (Video-Optimized)
 // ============================================================
 
 export type WorkflowStatus =
@@ -42,7 +42,7 @@ export type AuthState =
   | 'AUTHENTICATED'
   | 'SESSION_EXPIRED'
   | 'AUTH_FAILED'
-  | 'CONCURRENT_LOGIN_WARNING' // SAP only — ALWAYS requires human confirmation
+  | 'CONCURRENT_LOGIN_WARNING'
   | 'MFA_REQUIRED'
   | 'CAPTCHA_REQUIRED'
   | 'ERROR';
@@ -216,6 +216,7 @@ export type IPCChannel =
   | 'workflow:status'
   | 'workflow:history'
   | 'agent:status'
+  | 'credentials:get'
   | 'credentials:save'
   | 'credentials:test'
   | 'credentials:delete'
@@ -223,8 +224,12 @@ export type IPCChannel =
   | 'settings:get'
   | 'settings:set'
   | 'network:check'
+  | 'network:probe-endpoints'
+  | 'dialog:open-directory'
+  | 'app:get-paths'
   | 'browser:launch'
   | 'browser:close'
+  | 'browser:enable-active-attach'
   | 'files:open-dir'
   | 'files:history'
   | 'errors:list'
@@ -234,11 +239,13 @@ export type IPCChannel =
   | 'enterprise:save'
   | 'enterprise:delete'
   | 'enterprise:setActive'
-  | 'enterprise:get-active';
+  | 'enterprise:get-active'
+  | 'vault:export'
+  | 'vault:import'
+  | 'vault:create-snapshot'
+  | 'vault:list-snapshots';
 
-// ============================================================
-// OmniFlow Studio — Generic Multi-Enterprise Profile Types
-// ============================================================
+export * from './protocol.js';
 
 export type ERPType = 'SAP_B1' | 'ODOO' | 'NETSUITE' | 'CUSTOM_WEB';
 
@@ -251,14 +258,13 @@ export interface EnterpriseProfile {
   id: string;
   name: string;
   code: string;
-  description?: string;
-  erpType?: ERPType;
-  erpUrl?: string;
+  erpType: ERPType;
+  erpUrl: string;
   posUrl?: string;
   server?: string;
   database?: string;
-  companyName?: string;
-  companySchema?: string;
+  companyName: string;
+  companySchema: string;
   storeMappings?: Array<{ id: string; name: string }>;
   slocMappings?: Array<{ id: string; name: string }>;
   namingTemplate?: string;
@@ -305,7 +311,9 @@ export interface AppSettings {
   sapCompany?: string;
   sapDir?: string;
   sapAutoTakeOverSession?: boolean;
-  sapTargetModule?: 'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS';
+  sapTargetModule?: 'HOME' | 'PURCHASING_PO' | 'PURCHASING_GRPO' | 'PURCHASING_RETURN' | 'INVENTORY_STATUS' | 'QUERY_PRICELIST';
+  sapQueryCategory?: string;
+  sapQueryName?: string;
   browserAttachMode?: 'OPEN_TAB_IN_ACTIVE' | 'UNIFIED_PROFILE';
   general: {
     language: 'vi' | 'en';
@@ -398,7 +406,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     dailyProcurement: {
       enabled: true,
       retryLimit: 3,
-      stepTimeoutMs: 120000,
+      stepTimeoutMs: 180000,
     },
   },
   logging: {

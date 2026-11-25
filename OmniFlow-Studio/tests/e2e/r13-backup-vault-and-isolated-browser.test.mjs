@@ -322,16 +322,50 @@ test.describe('R13: Encrypted Vault Backup & Restore and Dedicated Browser Isola
   });
 
   // =========================================================================
-  // SECTION 5: Preload IPC Whitelist Verification
+  // SECTION 5: Preload IPC Whitelist & Automated DB Snapshot Verification
   // =========================================================================
 
-  test('T1-R13-12: apps/local-agent/src/preload/index.ts whitelists vault:export and vault:import', () => {
+  test('T1-R13-12: apps/local-agent/src/preload/index.ts whitelists vault:export, vault:import, vault:create-snapshot, vault:list-snapshots', () => {
     const preloadPath = path.join(ROOT_DIR, 'apps/local-agent/src/preload/index.ts');
     assert.ok(fs.existsSync(preloadPath), 'preload/index.ts must exist');
 
     const source = fs.readFileSync(preloadPath, 'utf8');
     assert.ok(source.includes("'vault:export'"), 'preload must whitelist vault:export');
     assert.ok(source.includes("'vault:import'"), 'preload must whitelist vault:import');
+    assert.ok(source.includes("'vault:create-snapshot'"), 'preload must whitelist vault:create-snapshot');
+    assert.ok(source.includes("'vault:list-snapshots'"), 'preload must whitelist vault:list-snapshots');
+  });
+
+  test('T1-R13-13: FMDatabase checkpoint() flushes WAL and createBackup() creates rotated snapshot files', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'r13-snap-'));
+    const dbPath = path.join(tmpDir, 'fmauto.sqlite');
+    const snapshotDir = path.join(tmpDir, 'snapshots');
+
+    try {
+      const db = new FMDatabase(dbPath);
+      db.setSetting('profile_test', 'alpha');
+      db.checkpoint();
+
+      // Create multiple snapshots with maxRetained = 2
+      for (let i = 1; i <= 4; i++) {
+        db.setSetting('counter', String(i));
+        db.createBackup(snapshotDir, 2);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+
+      const files = fs.readdirSync(snapshotDir).filter((f) => f.startsWith('fmauto-snapshot-') && f.endsWith('.sqlite'));
+      assert.equal(files.length, 2, 'Must retain exactly 2 snapshots after rotation');
+
+      const snapshots = db.listSnapshots(snapshotDir);
+      assert.equal(snapshots.length, 2);
+      assert.ok(snapshots[0].sizeBytes > 0);
+
+      db.close();
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      } catch {}
+    }
   });
 
 });

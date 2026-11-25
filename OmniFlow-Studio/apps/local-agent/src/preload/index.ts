@@ -33,6 +33,8 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>([
   'enterprise:get-active',
   'vault:export',
   'vault:import',
+  'vault:create-snapshot',
+  'vault:list-snapshots',
 ]);
 
 // Whitelist of strictly permitted incoming event channels

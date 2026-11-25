@@ -349,8 +349,18 @@ export default function POSPage() {
     posUrlEditedRef.current = true;
     setPosUrl(val);
     setPosUrlTestResult(null);
-    try { localStorage.setItem('pos_base_url', val); } catch {}
-    invoke('settings:set', { posBaseUrl: val }).catch(() => null);
+    const clean = val.trim().replace(/\/(home|login)\/?$/i, '');
+    try { localStorage.setItem('pos_base_url', clean || val); } catch {}
+    invoke('settings:set', { posBaseUrl: clean || val }).catch(() => null);
+  };
+
+  const handlePosUrlBlur = () => {
+    const clean = posUrl.trim().replace(/\/(home|login)\/?$/i, '');
+    if (clean !== posUrl) {
+      setPosUrl(clean);
+      try { localStorage.setItem('pos_base_url', clean); } catch {}
+      invoke('settings:set', { posBaseUrl: clean }).catch(() => null);
+    }
   };
 
   const handleTestPosUrl = async () => {
@@ -505,10 +515,11 @@ export default function POSPage() {
 
     // GAP-02: empty selection = All (no blocking)
     const storeFilterArg = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : (effectiveSalesStores.length > 0 ? effectiveSalesStores.join(',') : 'All');
+    const cleanPosUrl = (posUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
 
     await startWorkflow('DOWNLOAD_SALES', {
-      posBaseUrl: posUrl,
-      posUrl: posUrl,
+      posBaseUrl: cleanPosUrl,
+      posUrl: cleanPosUrl,
       fromDate: salesFromDate,
       toDate: salesToDate,
       storeFilter: storeFilterArg,
@@ -525,10 +536,11 @@ export default function POSPage() {
 
     // GAP-02: empty selection = All Slocs (no blocking)
     const slocFilterArg = effectiveInvSlocs.length === 0 || (isAllInvSlocsSelected && quickSlocIds.length === 0) ? '' : effectiveInvSlocs.join(',');
+    const cleanPosUrl = (posUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
 
     await startWorkflow('DOWNLOAD_INVENTORY', {
-      posBaseUrl: posUrl,
-      posUrl: posUrl,
+      posBaseUrl: cleanPosUrl,
+      posUrl: cleanPosUrl,
       inventoryStoreFilter: 'All',
       inventorySlocFilter: slocFilterArg,
       inventoryItemFilter: invItem,
@@ -546,10 +558,11 @@ export default function POSPage() {
     // GAP-02: empty selection = All (no blocking)
     const salesStoreFilter = !salesStoreFilterEnabled || isAllSalesStoresSelected ? 'All' : (effectiveSalesStores.length > 0 ? effectiveSalesStores.join(',') : 'All');
     const invSlocFilter = effectiveInvSlocs.length === 0 || (isAllInvSlocsSelected && quickSlocIds.length === 0) ? '' : effectiveInvSlocs.join(',');
+    const cleanPosUrl = (posUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
 
     await startWorkflow('POS_AUTOMATION', {
-      posBaseUrl: posUrl,
-      posUrl: posUrl,
+      posBaseUrl: cleanPosUrl,
+      posUrl: cleanPosUrl,
       includeSales: true,
       includeInventory: true,
       fromDate: salesFromDate,
@@ -668,6 +681,7 @@ export default function POSPage() {
               type="text"
               value={posUrl}
               onChange={(e) => handlePosUrlChange(e.target.value)}
+              onBlur={handlePosUrlBlur}
               placeholder="Nhập URL portal POS do doanh nghiệp cung cấp"
               className="flex-1 px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono text-slate-800"
             />
@@ -1035,7 +1049,7 @@ export default function POSPage() {
                 type="text"
                 value={quickSlocInput}
                 onChange={(e) => setQuickSlocInput(e.target.value)}
-                placeholder="VD: DC0101, SFM0101, SFM0201"
+                placeholder="VD: SDC0101, SDC0107, SDC0201, SFF0101, SFM0101..SFM1201"
                 className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 font-mono"
               />
             </div>

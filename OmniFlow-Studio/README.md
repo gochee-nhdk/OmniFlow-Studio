@@ -1,163 +1,85 @@
-﻿# 🚀 OmniFlow Studio (v1.0.0)
+# OmniFlow Studio (v2.1.0) — 100% Standalone Browser Extension
 
-<div align="center">
+> **Tiện ích mở rộng trình duyệt Chrome / Edge (Manifest V3) tự động hóa POS RPFO & SAP Business One — chạy 100% trực tiếp trong trình duyệt, không cần desktop app hay Local Server.**
 
-<img src="docs/screenshots/brand-logo.png" alt="OmniFlow Studio Logo" width="160" />
-
-### **Giải pháp Tự động hóa Trích xuất Dữ liệu ERP & POS Toàn diện cho Doanh nghiệp & Cá nhân**
-*High-Performance Enterprise-Grade Automation Platform for SAP Business One & POS RPFO*
-
-[![Release](https://img.shields.io/badge/release-v1.0.0-blue.svg?style=for-the-badge&logo=github)](https://github.com/gochee-nhdk/OmniFlow-Studio/releases)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg?style=for-the-badge&logo=electron)](https://github.com/gochee-nhdk/OmniFlow-Studio)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6.svg?style=for-the-badge&logo=windows)](https://github.com/gochee-nhdk/OmniFlow-Studio)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
-[![Playwright](https://img.shields.io/badge/Playwright-v1.65-45ba4b.svg?style=for-the-badge&logo=playwright)](https://playwright.dev/)
-[![Security](https://img.shields.io/badge/Security-AES--256%20DPAPI-orange.svg?style=for-the-badge&logo=safari)](https://github.com/gochee-nhdk/OmniFlow-Studio)
-
-<br/>
-
-[![Download](https://img.shields.io/badge/📥_TẢI_VỀ_BẢN_MỚI_NHẤT-v1.0.0_WINDOWS_X64-success?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/gochee-nhdk/OmniFlow-Studio/releases/download/v1.0.0/OmniFlow-Studio-v1.0.0-windows-x64.zip)
-[![Releases](https://img.shields.io/badge/📦_Tất_Cả_Phiên_Bản-GitHub_Releases-informational?style=for-the-badge&logo=github)](https://github.com/gochee-nhdk/OmniFlow-Studio/releases)
-
-<p align="center">
-  <b>Tự động hóa hoàn toàn quy trình đối soát dữ liệu bán lẻ POS RPFO và quản trị SAP Business One SLD.</b><br/>
-  <i>Tăng tốc độ trích xuất dữ liệu, triệt tiêu 100% sai sót thủ công và giám sát sức khỏe hạ tầng thời gian thực.</i>
-</p>
-
-</div>
+[![Version](https://img.shields.io/badge/version-2.1.0-2563EB.svg?style=flat-square)](./apps/extension/public/manifest.json)
+[![Manifest](https://img.shields.io/badge/Manifest-V3-059669.svg?style=flat-square)](./apps/extension/public/manifest.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?style=flat-square)](./apps/extension/package.json)
 
 ---
 
-## ⚡ Tải Về Nhanh (Direct Download Links)
+## Tổng quan (Overview)
 
-Người dùng có thể tải về bản cài đặt độc lập hoặc gói portable zip chạy ngay mà không cần cài đặt thêm môi trường:
-
-| Gói phân phối (Distribution Package) | Nền tảng (Platform) | Trạng thái (Status) | Liên kết tải trực tiếp (Download Link) |
-| :--- | :--- | :--- | :--- |
-| **OmniFlow Studio Standalone Package (.zip)** | Windows x64 (10/11/Server) | Sẵn sàng (v1.0.0) | [👉 **Tải OmniFlow-Studio-v1.0.0-windows-x64.zip**](https://github.com/gochee-nhdk/OmniFlow-Studio/releases/download/v1.0.0/OmniFlow-Studio-v1.0.0-windows-x64.zip) |
-| **Kho Lưu Trữ Phiên Bản (GitHub Releases)** | Toàn bộ phiên bản | Release Hub | [👉 **Xem Tất Cả Bản Phát Hành Tại Releases**](https://github.com/gochee-nhdk/OmniFlow-Studio/releases) |
+**OmniFlow Studio v2.1.0** hoạt động dưới dạng **100% Standalone Browser Extension**:
+- **Không cần** ứng dụng desktop, máy chủ WebSocket hay bất kỳ dịch vụ nền nào bên ngoài trình duyệt.
+- Lưu trữ cấu hình, nhật ký hoạt động và lịch sử tải tệp hoàn toàn cục bộ trong `chrome.storage.local`.
+- Điều khiển tự động hóa trực tiếp trên tab POS RPFO và SAP Business One đang mở (hoặc tự động mở tab mới trong cửa sổ hiện tại) thông qua `chrome.tabs`, `chrome.scripting` và `chrome.downloads`.
 
 ---
 
-## 🖥️ Giao Diện
+## Tính năng nổi bật
 
-Ứng dụng khởi động với hồ sơ doanh nghiệp, máy chủ, tài khoản, cửa hàng và kho trống. Mỗi người dùng tự cấu hình thông tin trên máy của mình; repository không chứa ảnh chụp có dữ liệu cấu hình.
+### 1. Tự động hóa POS RPFO (`apps/extension/src/engines/pos-engine.ts`)
+- Tự động đăng nhập, khôi phục `/home` hoặc `app-page-not-found`, chọn Outlet ưu tiên (mặc định `FM04`).
+- **Doanh số POS (`DOWNLOAD_SALES`)**: Điều hướng `MORE -> Report`, áp dụng khoảng ngày (`TODAY`, `YESTERDAY`, `PREVIOUS_WEEK`, `CUSTOM`), xuất Excel Sales Transaction Detail.
+- **Tồn kho POS 12 Kho (`DOWNLOAD_INVENTORY`)**: Lọc chính xác 12 mã kho SLOC (`SDC0101` .. `SFM1001`) trên lưới DevExtreme `dxDataGrid` (hỗ trợ `columnOption('filterValues')` và Virtual Scroll Header Filter fallback), xuất Excel Onhand.
+- **Con trỏ ảo trực quan (`cursor-overlay.ts`)**: Shadow DOM overlay hiển thị di chuyển, click, nhập liệu và highlight ngay trên trang web.
 
-## 🌟 Điểm Nhấn Tính Năng Đột Phá (Feature Highlights)
+### 2. Tự động hóa SAP Business One (`apps/extension/src/engines/sap-engine.ts`)
+- Hỗ trợ SLD Logon & Browser Access Dispatcher (bao gồm cả thực thi xuyên `iframe` với `allFrames: true`).
+- Tự động khôi phục lỗi SAML2 `/dispatcher/saml2/sp/acs` (`NullPointerException`) về `/dispatcher/`.
+- Tự động xử lý cảnh báo trùng phiên (`autoTakeOverSession`), mở Query Manager (`Danh Mục -> Danh sách item ncc pricelist_non_Asset`) và xuất Excel Pricelist.
 
-### 🏢 1. Multi-Tenant Enterprise Profile (Tùy biến mọi loại hình doanh nghiệp, không giới hạn)
-- **Quản lý không giới hạn hồ sơ:** Chuyển đổi linh hoạt giữa các tổ chức, công ty thành viên, thương hiệu bán lẻ hoặc chi nhánh độc lập.
-- **Tùy biến danh mục kho & cửa hàng:** Thêm, sửa, kích hoạt hoặc vô hiệu hóa các mã kho (`Store ID`, `Sloc ID`) trực quan ngay trên giao diện.
-- **Công thức đặt tên tệp thông minh:** Hỗ trợ cú pháp placeholder linh hoạt: `{{orgCode}}_{{reportType}}_{{fromDate}}_{{toDate}}.xlsx`.
+### 3. Daily Procurement (`DAILY_PROCUREMENT`)
+- Chạy tuần tự **Doanh số POS → Tồn kho POS 12 Kho → SAP Business One** với thanh tiến trình thời gian thực và hỗ trợ dừng giữa chừng (`ABORT_WORKFLOW`).
 
-### 🛒 2. POS RPFO Automation (Trích xuất doanh số, tồn kho đa kho, chống timeout)
-- **Tải Data Doanh số tự động:** Hỗ trợ quét và trích xuất báo cáo doanh số chi tiết theo chuỗi ngày hoặc ngày đơn lẻ.
-- **Tải Data Tồn kho đa điểm (Sloc ID):** Đồng bộ dữ liệu kho của toàn bộ chuỗi cửa hàng, kho tổng hoặc từng mã kho xác định chỉ với 1 cú click.
-- **Cơ chế chọn kho thông minh:** Tự động điền chuỗi tham số `ST01; ST02; DC01; ...` vào lưới lọc của web POS, ngăn ngừa lỗi tràn bộ nhớ hoặc rớt kết nối.
-
-### 💼 3. SAP Business One SLD Automation (Tự đăng nhập, giải quyết trùng phiên, bảo mật AES-256)
-- **Tự động đăng nhập & Điều hướng:** Tự động xác thực qua System Landscape Directory (SLD) và điều hướng chuẩn xác vào phiên bản nghiệp vụ.
-- **Độc quyền Take Over Session:** Tự động phát hiện và ngắt các phiên làm việc bị treo hoặc đang kẹt bởi người dùng khác, đảm bảo luồng chạy 24/7 không gián đoạn.
-- **Bảo mật chuẩn Enterprise:** Mật khẩu và thông tin tài khoản được mã hóa chuẩn **AES-256-GCM** kết hợp phân vùng an toàn OS Vault (Windows DPAPI / Credential Manager), triệt tiêu hoàn toàn nguy cơ rò rỉ plain text.
-
-### 🌐 4. Real Live Infrastructure Monitor (Đo độ trễ ms, socket handshake thực tế)
-- **Active Diagnostic Probing:** Đo thời gian phản hồi (round-trip latency) tới cổng dịch vụ SAP (port 8100, 40000) và POS RPFO.
-- **Socket Handshake Verification:** Kiểm tra kết nối TCP socket thực tế, hiển thị trạng thái `Online / Degraded / Offline` tức thì.
-
-### 🔄 5. Adaptive Retry & Anti-Hang (Tự phục hồi khi đứt mạng/treo wave)
-- **Wave Animation Guard:** Tự nhận diện trạng thái tải xoay vòng (loading spinner/wave animation) của lưới dữ liệu web, kiên nhẫn chờ dữ liệu render hoàn tất.
-- **Adaptive Exponential Backoff:** Tự động retry theo lũy thừa thời gian khi phát hiện socket drop hoặc timeout tạm thời từ phía server.
+### 4. Giao diện Light-First UX/UI
+- **Side Panel (`apps/extension/src/sidepanel/`)**: Giao diện sáng mặc định với 5 tab: **Agent** (đọc DOM của tab, chụp ảnh để người dùng xem, và chạy kế hoạch sau khi duyệt), **Điều khiển**, **Tệp tin**, **Console**, **Cấu hình**.
+- **SOP Knowledge (`apps/extension/src/engines/workflow-knowledge.ts`)**: Quy trình POS/SAP được chuẩn hóa từ PDF thao tác; Purchase Order và Goods Return chỉ mở form, không tự ghi sổ chứng từ.
+- **Popup (`apps/extension/src/popup/`)**: Trạng thái `100% Extension • Sẵn sàng`, ping kiểm tra POS/SAP, 5 tác vụ nhanh, thanh tiến trình + nút Dừng và nút `Mở Bảng điều khiển`.
+- **Floating Widget (`apps/extension/src/content/`)**: Widget nổi Light Mode trên trang POS & SAP để điền nhanh tài khoản, chọn Outlet, khôi phục SAML2, chạy quy trình và xem toast tiến trình trực tiếp.
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy Ứng Dụng
+## Cài đặt nhanh (Load Unpacked)
 
-### Cách 1: Chạy Bản Đóng Gói (Khuyên Dùng Cho Người Dùng Doanh Nghiệp)
-1. Tải về file nén phiên bản mới nhất: [OmniFlow-Studio-v1.0.0-windows-x64.zip](https://github.com/gochee-nhdk/OmniFlow-Studio/releases/download/v1.0.0/OmniFlow-Studio-v1.0.0-windows-x64.zip).
-2. Giải nén vào thư mục mong muốn (ví dụ: `D:\OmniFlow-Studio`).
-3. Khởi chạy file thực thi:
-   ```text
-   OmniFlow Studio.exe
-   ```
-   Ứng dụng sẽ tự động tải giao diện người dùng và động cơ tự động hóa ngầm mà không cần cài đặt thêm bất kỳ thư viện nào khác.
+1. Mở `chrome://extensions/` (Chrome) hoặc `edge://extensions/` (Edge).
+2. Bật **Developer mode**.
+3. Chọn **Load unpacked** và trỏ tới `apps/extension/dist` (hoặc thư mục `release/extension`).
 
 ---
 
-### Cách 2: Chạy Từ Mã Nguồn (Dành Cho Nhà Phát Triển)
+## Build từ mã nguồn (Build from Source)
+
 Yêu cầu: **Node.js (>= 20)** và **pnpm (>= 9)**.
 
-1. **Clone repository:**
-   ```bash
-   git clone https://github.com/gochee-nhdk/OmniFlow-Studio.git
-   cd OmniFlow-Studio
-   ```
-
-2. **Cài đặt các gói phụ thuộc:**
-   ```bash
-   pnpm install
-   ```
-
-3. **Build dự án:**
-   ```bash
-   pnpm run build
-   ```
-
-4. **Khởi chạy ứng dụng:**
-   ```bash
-   pnpm start
-   ```
-
----
-
-## ⚙️ Cấu Trúc Thư Mục Dữ Liệu Tự Động Hóa
-
-Mặc định, báo cáo được lưu trong thư mục Documents riêng của tài khoản Windows; có thể đổi nơi lưu trong phần Cài đặt:
-```text
-Documents\OmniFlow_Reports\
-├── Inventory/    # Báo cáo tồn kho đa điểm (Inventory Onhand Excel)
-├── Sales/        # Báo cáo chi tiết doanh số bán lẻ (Sales Detail Excel)
-├── SAP/          # Tệp dữ liệu & nhật ký đồng bộ từ SAP Business One
-└── PO/           # Đơn đặt hàng mua hàng tự động tạo (Purchase Orders)
+```bash
+pnpm install
+pnpm --filter @fm/extension typecheck
+pnpm --filter @fm/extension build
 ```
 
-Automation mở cửa sổ Edge/Chrome riêng với profile bền vững thuộc OmniFlow, còn các tab POS và SAP được quản lý riêng. Ứng dụng không dùng cookie hay tab của trình duyệt cá nhân. Nút **Dừng Auto** chỉ đóng các tab tác vụ để có thể chạy việc khác; khi thoát OmniFlow, profile browser do tool mở sẽ được đóng. Gắn vào browser đang chạy chỉ dành cho kiểm thử nâng cao và không bật mặc định.
-
 ---
 
-## 🛠️ Kiến Trúc Hệ Thống (System Architecture)
+## Cấu trúc Workspace
 
 ```text
 OmniFlow-Studio/
 ├── apps/
-│   ├── local-agent/        # Core desktop runner & Chromium Playwright automation engine
-│   └── web/                # Giao diện người dùng React 19 + Vite + Tailwind CSS
-├── packages/
-│   ├── browser-engine/     # Điều khiển Playwright / Chrome DevTools Protocol
-│   ├── pos-adapter/        # Bộ chuyển đổi nghiệp vụ giao diện POS RPFO
-│   ├── sap-adapter/        # Bộ chuyển đổi nghiệp vụ SAP Business One SLD
-│   ├── security/           # Mã hóa AES-256-GCM & Windows DPAPI Keytar
-│   ├── file-engine/        # Xử lý, tổ chức và chuẩn hóa file Excel/CSV xuất ra
-│   ├── shared-types/       # Kiểu dữ liệu TypeScript dùng chung toàn bộ workspace
-│   └── workflow-engine/    # Quản lý hàng đợi và điều phối luồng tác vụ song song
-├── docs/
-│   └── screenshots/        # Chỉ chứa tài nguyên thương hiệu dùng chung
-├── release/                # Bộ cài đặt & Gói đóng gói độc lập (.exe, .zip)
-└── assets/                 # Logo thương hiệu và icon ứng dụng
+│   ├── extension/            # [Chính] OmniFlow Standalone Browser Extension v2.1.0 (MV3)
+│   │   ├── public/           # manifest.json & icons
+│   │   ├── src/
+│   │   │   ├── background/   # Service worker điều phối workflow & downloads
+│   │   │   ├── engines/      # pos-engine.ts, sap-engine.ts, cursor-overlay.ts
+│   │   │   ├── popup/        # Popup UI
+│   │   │   ├── sidepanel/    # Side Panel UI (4 tabs)
+│   │   │   ├── content/      # Floating widgets cho POS & SAP
+│   │   │   ├── shared/       # storage.ts (chrome.storage.local)
+│   │   │   └── types.ts      # Types & message protocol
+│   │   ├── dist/             # Output build sẵn sàng Load unpacked
+│   │   └── build.mjs         # esbuild bundler & release sync
+│   ├── local-agent/          # [Legacy / Tùy chọn] Desktop runner cũ
+│   └── web/                  # [Legacy / Tùy chọn] Web UI cũ
+├── packages/                 # Các package monorepo lưu trữ / tùy chọn
+└── docs/                     # Tài nguyên tài liệu & thương hiệu
 ```
-
----
-
-## 🤝 Đóng Góp & Phát Triển
-
-Mọi đóng góp từ cộng đồng đều được hoan nghênh:
-1. Fork dự án về tài khoản cá nhân.
-2. Tạo nhánh tính năng mới (`git checkout -b feat/tinh-nang-moi`).
-3. Cam kết thay đổi (`git commit -m 'feat: them tinh nang moi'`).
-4. Đẩy nhánh lên repository (`git push origin feat/tinh-nang-moi`).
-5. Tạo **Pull Request** trên GitHub.
-
----
-
-## 📄 Giấy Phép (License)
-
-Phát hành theo giấy phép bản quyền của dự án OmniFlow Studio. Mọi quyền được bảo lưu.

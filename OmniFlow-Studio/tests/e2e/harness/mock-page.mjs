@@ -339,7 +339,15 @@ export class MockPage {
     });
   }
 
+  setMockDownload(filename, buffer) {
+    this._mockDownload = new MockDownload(filename, buffer);
+    return this._mockDownload;
+  }
+
   async waitForEvent(eventName, options = {}) {
+    if (eventName === 'download' && this._mockDownload) {
+      return this._mockDownload;
+    }
     const rawTimeout = options.timeout ?? 30000;
     const timeout = Math.min(rawTimeout, 200);
     return new Promise((resolve, reject) => {

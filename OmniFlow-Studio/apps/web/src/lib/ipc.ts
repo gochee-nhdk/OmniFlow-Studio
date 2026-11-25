@@ -1,40 +1,46 @@
-// FM AUTO OPS — Type-Safe IPC Bridge
-// Wraps window.fmAgent (Electron context bridge) with fallback for standalone browser usage.
+// FM AUTO OPS — Type-Safe IPC & WebSocket Bridge
+// Wraps ClientBridge (Electron context bridge + WebSocket ws://127.0.0.1:7779 + REST HTTP fallback)
 
-type IPCChannel = string;
+import {
+  getClientBridge,
+  ClientBridge,
+  type IPCChannel,
+  type BridgeConnectionState,
+} from '@fm/client-bridge';
 
-interface FMAgentBridge {
-  invoke: <T>(channel: IPCChannel, payload?: unknown) => Promise<{ success: boolean; data?: T; error?: string }>;
-  on: (channel: IPCChannel, listener: (data: unknown) => void) => () => void;
-}
-
-declare global {
-  interface Window {
-    fmAgent?: FMAgentBridge;
-  }
-}
+export { getClientBridge, ClientBridge };
+export type { IPCChannel, BridgeConnectionState };
 
 export function isElectron(): boolean {
-  return typeof window !== 'undefined' && typeof window.fmAgent !== 'undefined';
+  return getClientBridge().isElectron();
 }
 
-export async function invoke<T>(channel: IPCChannel, payload?: unknown): Promise<T> {
-  if (isElectron()) {
-    const result = await window.fmAgent!.invoke<T>(channel, payload);
-    if (!result.success) throw new Error(result.error ?? 'IPC call failed');
-    return result.data as T;
+export function getBridgeState(): BridgeConnectionState {
+  return getClientBridge().getState();
+}
+
+export async function invoke<T = unknown>(channel: IPCChannel | string, payload?: unknown): Promise<T> {
+  const bridge = getClientBridge();
+  try {
+    return await bridge.invoke<T>(channel, payload);
+  } catch (err: any) {
+    // If not in Electron and agent service is not running (standalone web preview mode),
+    // gracefully provide mock data so the Web UI continues to function.
+    if (!bridge.isElectron()) {
+      const mock = getMockData<T>(channel);
+      if (mock !== null && mock !== undefined) {
+        return mock;
+      }
+    }
+    throw err;
   }
-  return getMockData<T>(channel);
 }
 
-export function onEvent(channel: IPCChannel, listener: (data: unknown) => void): () => void {
-  if (isElectron()) {
-    return window.fmAgent!.on(channel, listener);
-  }
-  return () => {};
+export function onEvent(channel: string, listener: (data: unknown) => void): () => void {
+  return getClientBridge().on(channel, listener);
 }
 
-function getMockData<T>(channel: IPCChannel): T {
+function getMockData<T>(channel: string): T | null {
   const mocks: Record<string, unknown> = {
     'agent:status': {
       deviceId: 'local-pc-01',
@@ -52,7 +58,13 @@ function getMockData<T>(channel: IPCChannel): T {
     'credentials:get-meta': [],
     'enterprise:list': { profiles: [], activeId: '' },
     'settings:get': null,
-    'network:check': { sap: false, pos: false, sapLatency: 0, posLatency: 0, checkedAt: new Date().toISOString() },
+    'network:check': {
+      sap: false,
+      pos: false,
+      sapLatency: 0,
+      posLatency: 0,
+      checkedAt: new Date().toISOString(),
+    },
     'network:probe-endpoints': {
       results: [],
       checkedAt: new Date().toISOString(),

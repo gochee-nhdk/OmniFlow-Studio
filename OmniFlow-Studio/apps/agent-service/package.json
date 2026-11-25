@@ -1,0 +1,36 @@
+{
+  "name": "@fm/agent-service",
+  "version": "1.0.0",
+  "description": "OmniFlow Headless Standalone Automation Service (HTTP & WebSocket Server)",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "bin": {
+    "omniflow-service": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "dev": "node dist/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@fm/browser-engine": "workspace:*",
+    "@fm/database": "workspace:*",
+    "@fm/file-engine": "workspace:*",
+    "@fm/pos-adapter": "workspace:*",
+    "@fm/sap-adapter": "workspace:*",
+    "@fm/security": "workspace:*",
+    "@fm/shared-types": "workspace:*",
+    "@fm/workflow-engine": "workspace:*",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.7.0"
+  }
+}

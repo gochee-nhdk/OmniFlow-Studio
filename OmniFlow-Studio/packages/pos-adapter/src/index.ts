@@ -1,8 +1,11 @@
 // FM AUTO OPS — POS RPFO Automation Adapter
-// Direct implementation based on verified DOM and live network inspection
-// Verified login form: #txtName, #txtPassword, input[type="submit"]
-// Verified outlet select: .blog-sider-common -> /admin/dashboard
-// Verified reports: /admin/report/sales-transaction-detail & /admin/report/inventory-onhand
+// Optimized from empirical video analysis: RPFO | TDI APJ (http://172.16.1.200)
+// Key optimizations:
+//   1. Full 9-step shop initialization settlement wait on /shop/select-outlets (12-30s) without premature reload
+//   2. In-app Angular SPA menu navigation (MORE -> Report -> Inventory Onhand / Sales Transaction Detail) with URL fallback
+//   3. Extended wave & "Loading data" button polling (up to 90s for Inventory, 120s for Sales)
+//   4. Verified DevExtreme columnOption('filterValues') + Virtual Scroll DOM Header Filter multi-select
+//   5. Extended "Exporting..." modal settlement & 30s Blob/Download capture window
 
 import { Page, Download } from 'playwright';
 import { format, isValid } from 'date-fns';
@@ -12,9 +15,11 @@ import { join } from 'path';
 import os from 'os';
 import ExcelJS from 'exceljs';
 import AdmZip from 'adm-zip';
-import { POS_SELECTORS } from './selectors';
+import { POS_SELECTORS, DEFAULT_FARMERS_MARKET_SLOCS, DEFAULT_FARMERS_MARKET_STORES } from './selectors';
 import { BrowserManager } from '@fm/browser-engine';
 import { resolveNamingTemplate } from '@fm/file-engine';
+
+export { POS_SELECTORS, DEFAULT_FARMERS_MARKET_SLOCS, DEFAULT_FARMERS_MARKET_STORES };
 
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
 
@@ -32,6 +37,7 @@ export interface InventoryDownloadOptions {
   outputDir?: string;
   fileNameTemplate?: string;
   orgCode?: string;
+  preferredOutlet?: string;
 }
 
 export interface SalesDownloadOptions {
@@ -43,6 +49,7 @@ export interface SalesDownloadOptions {
   orgCode?: string;
   inventorySlocFilter?: string;
   inventoryItemFilter?: string;
+  preferredOutlet?: string;
 }
 
 export function parseFilterValues(raw?: string | string[]): string[] {
@@ -66,6 +73,7 @@ export interface POSCredentials {
 export interface POSLoginOptions extends POSCredentials {
   maxRetries?: number;
   retryDelayMs?: number;
+  preferredOutlet?: string;
   onProgress?: (msg: string) => void;
 }
 
@@ -80,13 +88,13 @@ export interface GridFilterOptions {
 export function resolveColumnIdentifiers(columnField: string): { dataField: string; titles: string[] } {
   const norm = columnField.trim().toLowerCase();
   if (norm === 'slocid' || norm === 'sloc id' || norm === 'sloc') {
-    return { dataField: 'slocId', titles: ['Sloc Id', 'Sloc', 'Kho'] };
+    return { dataField: 'slocId', titles: ['Sloc Id', 'Sloc ID', 'Sloc', 'Kho'] };
   }
   if (norm === 'itemcode' || norm === 'item code' || norm === 'item') {
     return { dataField: 'itemCode', titles: ['Item Code', 'Item', 'Mã sản phẩm', 'Mã'] };
   }
   if (norm === 'storeid' || norm === 'store id' || norm === 'store') {
-    return { dataField: 'storeId', titles: ['Store Id', 'Store', 'Cửa hàng'] };
+    return { dataField: 'storeId', titles: ['Store Id', 'Store ID', 'Store', 'Cửa hàng'] };
   }
   if (norm === 'whsname' || norm === 'whs name') {
     return { dataField: 'whsName', titles: ['Whs Name', 'Tên kho'] };
@@ -99,7 +107,7 @@ export function resolveColumnIdentifiers(columnField: string): { dataField: stri
 
 /**
  * Filter DevExpress DataGrid by column and value.
- * Supports Mode A (DevExtreme JS API) with fallback to Mode B (DOM Header Filter Popup matching Hình 5).
+ * Supports Mode A (DevExtreme JS API) with fallback to Mode B (DOM Header Filter Popup with Virtual Scroll support).
  */
 export async function setGridFilter(
   page: Page,
@@ -118,7 +126,6 @@ export async function setGridFilter(
         const gridEl = document.querySelector('.dx-datagrid');
         if (!gridEl) return false;
 
-        // Try DevExpress global first, then jQuery wrapper
         let grid: any = null;
         const devExpress = (window as any).DevExpress;
         if (devExpress?.ui?.dxDataGrid) {
@@ -130,18 +137,22 @@ export async function setGridFilter(
             try { grid = jq(gridEl).dxDataGrid('instance'); } catch { /* ignore */ }
           }
         }
-        if (!grid) return false;
+        if (!grid || typeof grid.columnOption !== 'function') return false;
 
         let targetField = dataField;
         if (typeof grid.getColumns === 'function') {
           const cols = grid.getColumns();
-          const match = cols.find((c: any) =>
-            c.dataField === dataField ||
-            titles.some((t: string) => t.toLowerCase() === (c.caption || '').toLowerCase()) ||
-            titles.some((t: string) => t.toLowerCase() === (c.dataField || '').toLowerCase()) ||
-            (c.name && titles.some((t: string) => t.toLowerCase() === c.name.toLowerCase()))
-          );
-          if (match) {
+          if (Array.isArray(cols) && cols.length > 0) {
+            const match = cols.find((c: any) =>
+              c.dataField === dataField ||
+              titles.some((t: string) => t.toLowerCase() === (c.caption || '').toLowerCase()) ||
+              titles.some((t: string) => t.toLowerCase() === (c.dataField || '').toLowerCase()) ||
+              (c.name && titles.some((t: string) => t.toLowerCase() === c.name.toLowerCase()))
+            );
+            if (!match) {
+              // If real columns are exposed and none matched, fall back to DOM popup
+              return false;
+            }
             targetField = match.dataField || match.name || match.caption || dataField;
           }
         }
@@ -149,21 +160,16 @@ export async function setGridFilter(
         if (vals.length === 0) {
           grid.columnOption(targetField, 'filterValues', []);
         } else {
-          // Build filter expression
-          const filterExpr = vals.length === 1
-            ? [targetField, '=', vals[0]]
-            : vals.flatMap((v: string, idx: number) => idx === 0 ? [[targetField, '=', v]] : ['or', [targetField, '=', v]]);
-          try { grid.filter(filterExpr); } catch { /* non-fatal */ }
-          grid.columnOption(targetField, 'filterValues', vals);
+          // Use DevExtreme native header filter inclusion array (matches manual checkbox ticks in Video 1)
           grid.columnOption(targetField, 'filterType', 'include');
+          grid.columnOption(targetField, 'filterValues', vals);
         }
         if (typeof grid.refresh === 'function') grid.refresh();
         return true;
       }, { dataField: resolved.dataField, titles: resolved.titles, vals: filterVals });
 
       if (apiSuccess) {
-        await page.waitForTimeout(200);
-        await page.waitForTimeout(200);
+        await page.waitForTimeout(300);
         return true;
       }
     } catch {
@@ -171,7 +177,7 @@ export async function setGridFilter(
     }
   }
 
-  // 2. Mode B: DOM Header Filter Popup Automation (Matching Hình 5)
+  // 2. Mode B: DOM Header Filter Popup Automation (Matching Video 1 03:07 - 04:08)
   if (mode === 'auto' || mode === 'dom') {
     try {
       let headerCell: any = null;
@@ -194,7 +200,7 @@ export async function setGridFilter(
 
       if (!headerCell) return false;
 
-      // Click filter icon
+      // Click filter funnel icon
       const filterIcon = headerCell.locator('.dx-header-filter').first();
       if (!(await filterIcon.isVisible().catch(() => false))) {
         return false;
@@ -207,7 +213,7 @@ export async function setGridFilter(
       ).first();
       await popup.waitFor({ state: 'visible', timeout: 5000 });
 
-      // Uncheck "(Select All)" / "(Chọn tất cả)" first to deselect all existing selections
+      // Uncheck "(Select All)" ONLY if it is currently checked
       const selectAllItem = popup.locator('.dx-list-item, .dx-item').filter({
         hasText: /^\s*[\(\（]?(Select All|Chọn tất cả|Tất cả)[\)\）]?\s*$/i
       }).first();
@@ -216,20 +222,21 @@ export async function setGridFilter(
         if (await selectAllCheckbox.isVisible().catch(() => false)) {
           const isChecked = (await selectAllCheckbox.getAttribute('aria-checked').catch(() => null)) === 'true'
             || (await selectAllCheckbox.locator('.dx-checkbox-checked').count().catch(() => 0)) > 0;
-          if (isChecked) await selectAllCheckbox.click();
-        } else {
-          await selectAllItem.click();
+          if (isChecked) {
+            await selectAllCheckbox.click();
+            await page.waitForTimeout(150);
+          }
         }
-        await page.waitForTimeout(150);
       }
 
-      for (const targetVal of filterVals) {
-        // Clear search box and type the value
+      if (filterVals.length === 1) {
+        // Single value filter: Direct search input automation matching Hình 5
+        const targetVal = filterVals[0];
         const searchInput = popup.locator('input.dx-texteditor-input, input[placeholder*="Search"], input[type="text"]').first();
         if (await searchInput.isVisible().catch(() => false)) {
           await searchInput.fill('');
           await searchInput.fill(targetVal);
-          await page.waitForTimeout(250);
+          await page.waitForTimeout(200);
         }
 
         const listItem = popup.locator('.dx-list-item, .dx-item').filter({ hasText: targetVal }).first();
@@ -240,9 +247,85 @@ export async function setGridFilter(
               ? await checkbox.getAttribute('aria-checked').catch(() => null)
               : null;
             const checkedClass = await checkbox.locator('.dx-checkbox-checked').count().catch(() => 0);
-            if (alreadyChecked !== 'true' && checkedClass === 0) await checkbox.click();
+            if (alreadyChecked !== 'true' && checkedClass === 0) {
+              await checkbox.click();
+            }
           } else {
             await listItem.click();
+          }
+        }
+      } else {
+        // Strategy B1: Virtual Scroll Multi-Select (matches Video 1 03:08 - 04:08 without resetting via search box)
+        const remainingTargets = new Set(filterVals);
+        const tickVisibleMatches = async () => {
+          for (const targetVal of Array.from(remainingTargets)) {
+            const listItem = popup.locator('.dx-list-item, .dx-item').filter({ hasText: targetVal }).first();
+            if (await listItem.isVisible().catch(() => false)) {
+              const checkbox = listItem.locator('.dx-checkbox, input[type="checkbox"]').first();
+              if (await checkbox.isVisible().catch(() => false)) {
+                const alreadyChecked = typeof checkbox.getAttribute === 'function'
+                  ? await checkbox.getAttribute('aria-checked').catch(() => null)
+                  : null;
+                const checkedClass = await checkbox.locator('.dx-checkbox-checked').count().catch(() => 0);
+                if (alreadyChecked !== 'true' && checkedClass === 0) {
+                  await checkbox.click();
+                }
+              } else {
+                await listItem.click();
+              }
+              remainingTargets.delete(targetVal);
+            }
+          }
+        };
+
+        // Initial pass at top of popup
+        await tickVisibleMatches();
+
+        // Scroll through virtual scroll container if some Sloc IDs are further down
+        if (remainingTargets.size > 0) {
+          for (let step = 0; step < 12 && remainingTargets.size > 0; step++) {
+            const scrolled = await page.evaluate(() => {
+              const scroller = document.querySelector(
+                '.dx-header-filter-menu .dx-scrollable-container, .dx-popup-content .dx-scrollable-container, .dx-header-filter-menu .dx-list'
+              ) as HTMLElement | null;
+              if (!scroller) return false;
+              const prev = scroller.scrollTop;
+              scroller.scrollTop += 180;
+              scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+              return scroller.scrollTop > prev;
+            }).catch(() => false);
+            await page.waitForTimeout(150);
+            await tickVisibleMatches();
+            if (!scrolled) break;
+          }
+        }
+
+        // Strategy B2: Search input fallback for any remaining target values
+        if (remainingTargets.size > 0) {
+          const searchInput = popup.locator('input.dx-texteditor-input, input[placeholder*="Search"], input[type="text"]').first();
+          if (await searchInput.isVisible().catch(() => false)) {
+            for (const targetVal of Array.from(remainingTargets)) {
+              await searchInput.fill('');
+              await searchInput.fill(targetVal);
+              await page.waitForTimeout(250);
+              const listItem = popup.locator('.dx-list-item, .dx-item').filter({ hasText: targetVal }).first();
+              if (await listItem.isVisible().catch(() => false)) {
+                const checkbox = listItem.locator('.dx-checkbox, input[type="checkbox"]').first();
+                if (await checkbox.isVisible().catch(() => false)) {
+                  const alreadyChecked = typeof checkbox.getAttribute === 'function'
+                    ? await checkbox.getAttribute('aria-checked').catch(() => null)
+                    : null;
+                  const checkedClass = await checkbox.locator('.dx-checkbox-checked').count().catch(() => 0);
+                  if (alreadyChecked !== 'true' && checkedClass === 0) await checkbox.click();
+                } else {
+                  await listItem.click();
+                }
+                remainingTargets.delete(targetVal);
+              }
+            }
+            // Clear search input before clicking OK so DevExtreme commits all checked items
+            await searchInput.fill('').catch(() => null);
+            await page.waitForTimeout(150);
           }
         }
       }
@@ -253,7 +336,6 @@ export async function setGridFilter(
         await okBtn.click();
       }
 
-      // Wait for popup and loadpanel to hide, then wait for loading wave to complete
       await popup.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => null);
       await page.waitForSelector('.dx-loadpanel:visible', { state: 'hidden', timeout: 25000 }).catch(() => null);
       await page.waitForTimeout(300);
@@ -270,8 +352,6 @@ export async function setGridFilter(
 /**
  * Tier-2 Filter: Post-download Excel integrity enforcement.
  * Removes rows that don't match the specified filter criteria.
- * This is a safety net to guarantee exported data matches the requested filters
- * regardless of whether the in-app grid filters were applied correctly.
  */
 export async function enforceExcelFilterIntegrity(
   filePath: string,
@@ -292,8 +372,6 @@ export async function enforceExcelFilterIntegrity(
   try {
     await workbook.xlsx.readFile(filePath);
   } catch (readError) {
-    // DevExtreme exports may prefix XML element names with x:, which ExcelJS does
-    // not accept. Normalize only the workbook and worksheet XML and retry once.
     const archive = new AdmZip(filePath);
     let normalizedAny = false;
     for (const entry of archive.getEntries()) {
@@ -313,7 +391,6 @@ export async function enforceExcelFilterIntegrity(
   const worksheet = workbook.worksheets[0];
   if (!worksheet) throw new Error('POS export workbook has no worksheet to filter.');
 
-  // Find header row (row 1) and locate relevant column indices
   const headerRow = worksheet.getRow(1);
   let storeColIdx = 0;
   let slocColIdx = 0;
@@ -336,10 +413,9 @@ export async function enforceExcelFilterIntegrity(
   if (hasSlocFilter && slocColumn < 1) throw new Error('Cannot enforce POS Sloc filter: no Sloc or Store column was found.');
   if (hasItemFilter && itemCodeColIdx < 1 && itemNameColIdx < 1) throw new Error('Cannot enforce POS item filter: no item code or name column was found.');
 
-  // Collect row numbers to delete (iterate in reverse to preserve indices)
   const rowsToDelete: number[] = [];
   worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber === 1) return; // skip header
+    if (rowNumber === 1) return;
 
     const getCellVal = (colIdx: number): string =>
       colIdx > 0 ? String(row.getCell(colIdx).value ?? '').trim().toLowerCase() : '';
@@ -376,7 +452,6 @@ export async function enforceExcelFilterIntegrity(
     return { rowCount: Math.max(0, worksheet.rowCount - 1), filtered: false, modified: false };
   }
 
-  // Delete rows in reverse order to keep indices stable and retain header styling.
   for (let i = rowsToDelete.length - 1; i >= 0; i--) {
     worksheet.spliceRows(rowsToDelete[i], 1);
   }
@@ -393,76 +468,212 @@ export class POSAdapter {
 
   constructor(browserManager: BrowserManager, baseUrl = process.env.POS_URL || '') {
     this.browserManager = browserManager;
-    this.baseUrl = baseUrl ? (baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`) : '';
+    let clean = (baseUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
+    this.baseUrl = clean ? (clean.endsWith('/') ? clean : `${clean}/`) : '';
     if (!this.baseUrl) throw new Error('POS URL is not configured. Set it in the POS connection settings before automation.');
   }
 
   /**
-   * Helper to check whether POS session is already authenticated and ready.
+   * Helper to check whether POS session is already authenticated and past outlet initialization.
    */
   private async isPOSAuthenticated(page: Page): Promise<boolean> {
     const url = page.url();
-    // If on login or select outlets, definitely not yet authenticated
-    if (url.includes('/home') || url.includes('select-outlets')) {
+    if (url.includes('/login') || url.includes('select-outlets')) {
       return false;
     }
-    // Check if dashboard or admin or shop indicator is visible
     const hasAdminOrShop = url.includes('/admin') || url.includes('/shop');
     const hasIndicator = (await page.locator(
-      ':text("IN SHOP"), :text("Dashboard"), .blog-sider-common, a[href*="logout"], a[href*="admin"], .dx-datagrid'
+      ':text("IN SHOP"), :text("Dashboard"), :text("MORE"), a[href*="logout"], a[href*="admin"], .dx-datagrid'
     ).count().catch(() => 0)) > 0;
 
     return hasAdminOrShop || hasIndicator;
   }
 
   /**
+   * Selects an outlet card on /shop/select-outlets and waits for the 9-step initialization
+   * sequence (00:16 - 00:27 in Video 1) to complete without reloading mid-sequence.
+   */
+  private async selectOutletAndWaitSettlement(
+    page: Page,
+    preferredOutlet = 'FM04',
+    onProgress?: (msg: string) => void
+  ): Promise<boolean> {
+    const outletSelectors = [
+      `.blog-sider-common:has-text("${preferredOutlet}")`,
+      `.blog-sider-common`,
+      `div:has-text("${preferredOutlet} - Hoàng Hoa Thám"):not(:has(div:has-text("${preferredOutlet}")))`,
+      `:text("${preferredOutlet}")`,
+      `:text("DC01 - Nơ Trang Long")`,
+      `:text("FM01")`,
+    ];
+
+    let clicked = false;
+    for (const sel of outletSelectors) {
+      const card = page.locator(sel).first();
+      if (await card.isVisible().catch(() => false)) {
+        await card.click().catch(() => null);
+        clicked = true;
+        break;
+      }
+    }
+
+    if (!clicked) return false;
+
+    onProgress?.('Đang chờ POS nạp cấu hình cửa hàng (9 bước: Shop Info -> Default Customer)...');
+
+    // Wait up to 35 seconds for /shop/select-outlets 9-step initialization to transition to /admin/dashboard
+    for (let tick = 0; tick < 35; tick++) {
+      await page.waitForTimeout(1000);
+      if (await this.isPOSAuthenticated(page)) {
+        // Also wait briefly if Dashboard charts are still showing initial wave
+        await this.waitForLoadingWaveToEnd(page, 10000);
+        return true;
+      }
+      // If we are no longer on select-outlets, break early
+      const u = page.url();
+      if (!u.includes('select-outlets')) {
+        break;
+      }
+    }
+
+    return this.isPOSAuthenticated(page);
+  }
+
+  /**
+   * Navigate to a report via the in-app MORE -> Report modal (as shown in Video 1 at 00:37 and 04:43)
+   * to preserve Angular in-memory session state, with clean fallback to direct URL navigation.
+   */
+  private async navigateToReport(
+    page: Page,
+    reportName: 'Inventory Onhand' | 'Sales Transaction Detail',
+    fallbackPath: string
+  ): Promise<void> {
+    const currentUrl = page.url();
+    if (currentUrl.includes(fallbackPath)) return;
+
+    try {
+      const moreBtn = page.locator(
+        POS_SELECTORS.dashboard.moreButton.primary + ', ' +
+        POS_SELECTORS.dashboard.moreButton.fallback
+      ).first();
+
+      if (await moreBtn.isVisible().catch(() => false)) {
+        await moreBtn.click().catch(() => null);
+        await page.waitForTimeout(500);
+
+        const reportTile = page.locator(
+          POS_SELECTORS.moreModal.reportTile.primary + ', ' +
+          POS_SELECTORS.moreModal.reportTile.fallback
+        ).first();
+
+        if (await reportTile.isVisible().catch(() => false)) {
+          await reportTile.click().catch(() => null);
+          await page.waitForTimeout(500);
+
+          const itemLoc = page.locator(`:text-is("${reportName}"), :text("${reportName}")`).first();
+          if (!(await itemLoc.isVisible().catch(() => false))) {
+            // Scroll report modal for items further down like Sales Transaction Detail (04:45 in Video 1)
+            await page.evaluate(() => {
+              const modals = document.querySelectorAll('.modal-body, .dx-popup-content, .dx-scrollable-container, [role="dialog"] div');
+              modals.forEach((m) => { (m as HTMLElement).scrollTop += 300; });
+            }).catch(() => null);
+            await page.waitForTimeout(300);
+          }
+
+          if (await itemLoc.isVisible().catch(() => false)) {
+            await itemLoc.click().catch(() => null);
+            await page.waitForTimeout(2000);
+            if (page.url().includes(fallbackPath)) {
+              return;
+            }
+          }
+        }
+      }
+    } catch {
+      // Fallback to direct URL navigation below
+    }
+
+    await page.goto(`${this.baseUrl}${fallbackPath}`, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(2500);
+  }
+
+  /**
    * Ensure user is authenticated into POS with continuous retry loop.
-   * Handles transient network errors, redirects, session kickouts, and outlet selection.
    */
   async ensureAuthenticated(
     credentials?: POSCredentials,
-    options?: { maxRetries?: number; onProgress?: (msg: string) => void; retryDelayMs?: number }
+    options?: { maxRetries?: number; onProgress?: (msg: string) => void; retryDelayMs?: number; preferredOutlet?: string }
   ): Promise<Page> {
     const page = await this.browserManager.getPage('POS');
     const maxRetries = options?.maxRetries ?? 15;
     const retryDelay = options?.retryDelayMs ?? 2000;
+    const preferredOutlet = options?.preferredOutlet || 'FM04';
     const onProgress = options?.onProgress;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const currentUrl = page.url();
+        let currentUrl = page.url();
+
+        // 0. Auto-recover from "page-not-found works!" or invalid /home URL
+        const isNotFound = currentUrl.includes('404')
+          || currentUrl.endsWith('/home')
+          || currentUrl.endsWith('/home/')
+          || currentUrl.includes('/home?')
+          || (await page.locator('app-page-not-found, :text("page-not-found works!")').count().catch(() => 0)) > 0;
+
+        if (isNotFound) {
+          onProgress?.('Phát hiện URL /home (page-not-found) — Đang khôi phục điều hướng hợp lệ...');
+          const hasToken = await page.evaluate(() => {
+            return !!(localStorage.getItem('token') && localStorage.getItem('user'));
+          }).catch(() => false);
+
+          if (hasToken) {
+            onProgress?.('Phiên đăng nhập POS còn hiệu lực — Chuyển tiếp vào Dashboard...');
+            await page.goto(`${this.baseUrl}admin/dashboard`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
+          } else {
+            onProgress?.('Chuyển tiếp về màn hình đăng nhập POS /login...');
+            // Navigate to base URL first to let Angular router initialize properly
+            await page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
+            await page.waitForTimeout(2000);
+            // Then navigate to login if still on /home
+            if (page.url().endsWith('/home') || page.url().endsWith('/home/')) {
+              await page.goto(`${this.baseUrl}login`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
+            }
+          }
+          await page.waitForTimeout(2000);
+          currentUrl = page.url();
+        }
 
         // 1. Initial navigation if not on POS site
         if (!currentUrl.startsWith(this.baseUrl) || currentUrl === 'about:blank') {
           onProgress?.(`Đang kết nối POS RPFO (${this.baseUrl}) - Lần ${attempt}/${maxRetries}...`);
-          await page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
+          // Navigate directly to /login to avoid Angular default-route redirect to /home
+          await page.goto(`${this.baseUrl}login`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
           await page.waitForTimeout(1500);
         }
 
         // 2. Check if already authenticated
         if (await this.isPOSAuthenticated(page)) {
-          const hasLoginForm = page.url().includes('/home') || (await page.locator('#txtName').count().catch(() => 0)) > 0;
+          const hasLoginForm = (await page.locator('#txtName').count().catch(() => 0)) > 0 || page.url().includes('/login');
           if (!hasLoginForm) {
             return page;
           }
         }
 
-        // 3. Handle Outlet selection if displayed
-        const hasOutlets = page.url().includes('select-outlets') || (await page.locator('.blog-sider-common').count().catch(() => 0)) > 0;
+        // 3. Handle Outlet selection if displayed (00:13 - 00:27 in Video 1)
+        const hasOutlets = page.url().includes('select-outlets')
+          || (await page.locator('.blog-sider-common, :text("Last Login")').count().catch(() => 0)) > 0;
         if (hasOutlets) {
-          onProgress?.(`Phát hiện màn hình chọn Outlet/Cửa hàng - Đang chọn cửa hàng (Lần ${attempt}/${maxRetries})...`);
-          const outletCard = page.locator('.blog-sider-common').first();
-          if (await outletCard.isVisible().catch(() => false)) {
-            await outletCard.click().catch(() => null);
-            await page.waitForTimeout(3000);
-          }
-          if (await this.isPOSAuthenticated(page)) {
+          onProgress?.(`Phát hiện màn hình chọn Outlet/Cửa hàng - Đang chọn cửa hàng ${preferredOutlet} (Lần ${attempt}/${maxRetries})...`);
+          const ok = await this.selectOutletAndWaitSettlement(page, preferredOutlet, onProgress);
+          if (ok) {
             return page;
           }
         }
 
-        // 4. Handle Login Form if displayed
-        const loginFormVisible = page.url().includes('/home') || (await page.locator('#txtName, input[name*="user" i]').count().catch(() => 0)) > 0;
+        // 4. Handle Login Form if displayed (00:00 - 00:11 in Video 1)
+        const loginFormVisible = page.url().includes('/login')
+          || (await page.locator('#txtName, input[name*="user" i], input[placeholder*="User" i], button:has-text("LOGIN")').count().catch(() => 0)) > 0;
         if (loginFormVisible) {
           if (!credentials?.username || !credentials?.password) {
             throw new Error('POS login is required, but no POS credentials are saved. Please configure in Settings.');
@@ -470,7 +681,7 @@ export class POSAdapter {
 
           onProgress?.(`Đang điền thông tin và đăng nhập POS RPFO (Lần ${attempt}/${maxRetries})...`);
 
-          const userInput = page.locator('#txtName, input[name*="user" i]').first();
+          const userInput = page.locator('#txtName, input[name*="user" i], input[placeholder*="User" i], input[type="text"]').first();
           const passInput = page.locator('#txtPassword, input[type="password"]').first();
 
           if (await userInput.isVisible().catch(() => false)) {
@@ -482,47 +693,39 @@ export class POSAdapter {
             await passInput.fill(credentials.password);
           }
 
-          const submitBtn = page.locator('input[type="submit"], button:has-text("Login"), button[type="submit"]').first();
+          const submitBtn = page.locator('input[type="submit"], button:has-text("LOGIN"), button:has-text("Login"), button[type="submit"]').first();
           if (await submitBtn.isVisible().catch(() => false)) {
             await submitBtn.click().catch(() => null);
           }
 
-          // Wait settlement
-          await page.waitForTimeout(3000);
+          // Wait for redirect to /shop/select-outlets (handles transient "page-not-found works!" flash at 00:11)
+          await page.waitForTimeout(2500);
 
-          // Check if outlet selection screen appears immediately after login
-          const postLoginOutlets = page.url().includes('select-outlets') || (await page.locator('.blog-sider-common').count().catch(() => 0)) > 0;
+          const postLoginOutlets = page.url().includes('select-outlets')
+            || (await page.locator('.blog-sider-common, :text("Last Login")').count().catch(() => 0)) > 0;
           if (postLoginOutlets) {
-            onProgress?.('Đang hoàn tất chọn điểm bán Outlet sau đăng nhập...');
-            const outletCard = page.locator('.blog-sider-common').first();
-            if (await outletCard.isVisible().catch(() => false)) {
-              await outletCard.click().catch(() => null);
-              await page.waitForTimeout(3000);
-            }
+            onProgress?.(`Đang chọn điểm bán Outlet (${preferredOutlet}) và nạp cấu hình cửa hàng...`);
+            await this.selectOutletAndWaitSettlement(page, preferredOutlet, onProgress);
           }
 
-          // Check if now successfully authenticated
           if (await this.isPOSAuthenticated(page)) {
             onProgress?.('Đăng nhập POS RPFO thành công!');
             return page;
           }
 
-          // Check for error toast or alert
           const errorMsg = await page.evaluate(() => {
-            const el = document.querySelector('.alert, .toast-error, .text-danger, .error-message');
+            const el = document.querySelector('.alert, .toast-error, .text-danger, .error-message, .swal2-html-container');
             return el ? (el.textContent || '').trim() : '';
           }).catch(() => '');
 
           if (errorMsg) {
             onProgress?.(`Thông báo từ POS: ${errorMsg}`);
             if (/sai|không đúng|locked|khoá|invalid/i.test(errorMsg)) {
-              // Fatal auth failure early exit
               throw new Error(`Đăng nhập POS thất bại: ${errorMsg}`);
             }
           }
         }
 
-        // If not authenticated yet and not reached max retries, reload and retry
         if (attempt < maxRetries) {
           onProgress?.(`Chưa vào được trang POS, đang tải lại trang để thử lại (Lần ${attempt + 1}/${maxRetries})...`);
           await page.goto(this.baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
@@ -575,33 +778,84 @@ export class POSAdapter {
    */
   async login(
     credentials: POSCredentials,
-    options?: { maxRetries?: number; onProgress?: (msg: string) => void; retryDelayMs?: number }
+    options?: { maxRetries?: number; onProgress?: (msg: string) => void; retryDelayMs?: number; preferredOutlet?: string }
   ): Promise<boolean> {
     await this.ensureAuthenticated(credentials, options);
     return true;
   }
 
   /**
+   * Inject client-side Blob interceptor and URL.revokeObjectURL delay guard.
+   */
+  private async injectBlobInterceptor(page: Page): Promise<void> {
+    await page.evaluate(() => {
+      (window as any).__capturedBlobs = [];
+      if (!(window as any).__blobHookInstalled) {
+        (window as any).__blobHookInstalled = true;
+        const origCreate = URL.createObjectURL;
+        URL.createObjectURL = function(blob: any) {
+          if (blob instanceof Blob) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              (window as any).__capturedBlobs.push({
+                type: blob.type,
+                size: blob.size,
+                dataUrl: reader.result,
+              });
+            };
+            reader.readAsDataURL(blob);
+          }
+          return origCreate.apply(this, arguments as any);
+        };
+
+        const origRevoke = URL.revokeObjectURL;
+        URL.revokeObjectURL = function(url: string) {
+          setTimeout(() => origRevoke.call(URL, url), 60000);
+        };
+      }
+    }).catch(() => null);
+  }
+
+  /**
+   * Wait for DevExtreme "Exporting..." overlay (04:12-04:17 & 06:51-06:56 in Video 1) and poll captured blobs.
+   */
+  private async waitForCapturedBlob(page: Page, minBytes = 50, maxWaitMs = 25000): Promise<Buffer | null> {
+    const ticks = Math.max(10, Math.ceil(maxWaitMs / 400));
+    for (let tick = 0; tick < ticks; tick++) {
+      await page.waitForTimeout(400);
+      const blobs = await page.evaluate(() => (window as any).__capturedBlobs || []).catch(() => []);
+      if (Array.isArray(blobs) && blobs.length > 0 && blobs[0].dataUrl) {
+        const base64Data = String(blobs[0].dataUrl).split(',')[1];
+        if (base64Data) {
+          const buf = Buffer.from(base64Data, 'base64');
+          if (buf.length > minBytes) {
+            return buf;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Download Sales Transaction Detail report.
+   * Optimized for 76-second multi-day queries and Exporting... modal (04:46 - 07:09 in Video 1).
    */
   async downloadSalesTransactionDetail(
     options: SalesDownloadOptions,
     credentials?: POSCredentials
   ): Promise<POSDownloadResult> {
-    const page = await this.ensureAuthenticated(credentials);
+    const page = await this.ensureAuthenticated(credentials, { preferredOutlet: options.preferredOutlet });
 
-    // Direct navigation to sales-transaction-detail
-    await page.goto(`${this.baseUrl}admin/report/sales-transaction-detail`, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await page.waitForTimeout(3000);
+    await this.navigateToReport(page, 'Sales Transaction Detail', 'admin/report/sales-transaction-detail');
 
-    // If redirected to login, re-authenticate and navigate again
-    if (page.url().includes('/home') || (await page.locator('#txtName').count()) > 0) {
-      await this.ensureAuthenticated(credentials);
-      await page.goto(`${this.baseUrl}admin/report/sales-transaction-detail`, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForTimeout(3000);
+    // If redirected to login or 404, re-authenticate and navigate again
+    if (page.url().includes('/login') || page.url().includes('404') || page.url().includes('/home') || (await page.locator('#txtName').count().catch(() => 0)) > 0) {
+      await this.ensureAuthenticated(credentials, { preferredOutlet: options.preferredOutlet });
+      await this.navigateToReport(page, 'Sales Transaction Detail', 'admin/report/sales-transaction-detail');
     }
 
-    // Set Date Filter if provided
+    // Set Date & Store Filters
     try {
       if (options.fromDate) await this.setDateFilter(page, 'from', options.fromDate);
       if (options.toDate) await this.setDateFilter(page, 'to', options.toDate);
@@ -613,13 +867,13 @@ export class POSAdapter {
       console.warn('Date/Store filter setting note:', (e as Error).message);
     }
 
-    // Click Search to populate grid with auto-retry if 0 rows returned
+    // Click Search to populate grid with extended 120s wave timeout (Video 1 took 76s for 7 days!)
     const searchBtn = page.locator('dx-button[icon="search"], button:has-text("Search"), a:has-text("Search")').first();
     for (let sAttempt = 1; sAttempt <= 3; sAttempt++) {
       if (await searchBtn.isVisible().catch(() => false)) {
         await searchBtn.click().catch(() => null);
       }
-      await this.waitForLoadingWaveToEnd(page, 45000);
+      await this.waitForLoadingWaveToEnd(page, 120000);
       await page.waitForTimeout(1500);
 
       const rowCount = await page.locator('.dx-datagrid-rowsview .dx-data-row').count().catch(() => 0);
@@ -635,17 +889,38 @@ export class POSAdapter {
       if (!applied) await this.setGridFilter(page, 'slocId', parsedStores).catch(() => false);
     }
 
-    // Wait for Search to finish and square Excel export button becomes visible (Hình 3)
-    const excelBtn = page.locator(
-      POS_SELECTORS.salesTransactionDetail.excelButton.primary + ', ' +
-      POS_SELECTORS.salesTransactionDetail.excelButton.fallback
+    // Locate square DataGrid export button first (for R3 compatibility), falling back to blue Excel button (06:50 in Video 1)
+    const squareExcelBtn = page.locator(
+      '.dx-datagrid-header-panel .dx-datagrid-export-button, ' +
+      '.dx-datagrid-header-panel .dx-button:has(.dx-icon-xlsxfile), ' +
+      '.dx-datagrid-header-panel [aria-label*="Export to Excel" i], ' +
+      '.dx-datagrid-export-button'
     ).first();
+
+    const blueExcelBtn = page.locator(
+      POS_SELECTORS.salesTransactionDetail.blueExcelButton.primary + ', ' +
+      POS_SELECTORS.salesTransactionDetail.blueExcelButton.fallback
+    ).first();
+
+    const excelBtn = (await squareExcelBtn.isVisible().catch(() => false))
+      ? squareExcelBtn
+      : (await blueExcelBtn.isVisible().catch(() => false))
+        ? blueExcelBtn
+        : page.locator(
+            POS_SELECTORS.salesTransactionDetail.excelButton.primary + ', ' +
+            POS_SELECTORS.salesTransactionDetail.excelButton.fallback
+          ).first();
+
     await excelBtn.waitFor({ state: 'visible', timeout: 45000 });
 
     const salesStores = parseFilterValues(options.storeFilter);
     let tempFilename = resolveNamingTemplate(options.fileNameTemplate || 'Sales_{{fromDate}}_{{toDate}}.xlsx', {
-      orgCode: options.orgCode || 'ORG', reportType: 'SALES', fromDate: options.fromDate || 'ALL',
-      toDate: options.toDate || 'ALL', storeId: salesStores.length === 0 ? 'ALL' : salesStores.length === 1 ? salesStores[0] : `${salesStores.length}STORES`, timestamp: new Date(),
+      orgCode: options.orgCode || 'ORG',
+      reportType: 'SALES',
+      fromDate: options.fromDate || 'ALL',
+      toDate: options.toDate || 'ALL',
+      storeId: salesStores.length === 0 ? 'ALL' : salesStores.length === 1 ? salesStores[0] : `${salesStores.length}STORES`,
+      timestamp: new Date(),
     });
 
     if (!tempFilename.toLowerCase().endsWith('.xlsx')) {
@@ -657,42 +932,18 @@ export class POSAdapter {
     const tempPath = join(tempDir, tempFilename);
     mkdirSync(tempDir, { recursive: true });
 
-    // Inject Blob Hook into the page to capture client-side generated Excel blob before immediate revocation
-    await page.evaluate(() => {
-      (window as any).__capturedBlobs = [];
-      const origCreate = URL.createObjectURL;
-      URL.createObjectURL = function(blob: any) {
-        if (blob instanceof Blob) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            (window as any).__capturedBlobs.push({
-              type: blob.type,
-              size: blob.size,
-              dataUrl: reader.result
-            });
-          };
-          reader.readAsDataURL(blob);
-        }
-        return origCreate.apply(this, arguments as any);
-      };
+    await this.injectBlobInterceptor(page);
 
-      const origRevoke = URL.revokeObjectURL;
-      URL.revokeObjectURL = function(url: string) {
-        setTimeout(() => origRevoke.call(URL, url), 30000);
-      };
-    });
-
-    // Capture either direct backend export stream OR browser download event OR blob hook
     const responsePromise = page.waitForResponse(
       (res) => (res.url().includes('Export_RPT_SalesTransactionDetail') || res.headers()['content-type']?.includes('spreadsheet')) && res.status() === 200,
-      { timeout: 30000 }
+      { timeout: 45000 }
     ).catch(() => null);
 
-    const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
+    const downloadPromise = page.waitForEvent('download', { timeout: 45000 }).catch(() => null);
 
     await excelBtn.click();
 
-    // Check if DevExtreme export context menu appeared (Mode B / Dropdown)
+    // Check if DevExtreme export context menu appeared
     const exportMenuItem = page.locator(
       '.dx-export-menu-item:has-text("Export all data to Excel"), ' +
       '.dx-export-menu-item, ' +
@@ -703,27 +954,36 @@ export class POSAdapter {
       await exportMenuItem.click().catch(() => null);
     }
 
-    // 1. First priority: Check Blob Hook (most reliable for client-side DevExpress export)
-    for (let tick = 0; tick < 20; tick++) {
-      await page.waitForTimeout(500);
-      const blobs = await page.evaluate(() => (window as any).__capturedBlobs || []);
-      if (blobs.length > 0 && blobs[0].dataUrl) {
-        const base64Data = (blobs[0].dataUrl as string).split(',')[1];
-        if (base64Data) {
-          const buf = Buffer.from(base64Data, 'base64');
-          if (buf.length > 500) {
-            writeFileSync(tempPath, buf);
-            await enforceExcelFilterIntegrity(tempPath, {
-              stores: parseFilterValues(options.storeFilter),
-            });
-            return {
-              reportType: 'SALES',
-              suggestedFilename: tempFilename,
-              tempFilePath: tempPath,
-              downloadedAt: new Date().toISOString(),
-            };
-          }
-        }
+    // 1. First priority: Check Blob Hook (polls up to 25s across the 6s Exporting... spinner)
+    const blobBuf = await this.waitForCapturedBlob(page, 500, 25000);
+    if (blobBuf) {
+      writeFileSync(tempPath, blobBuf);
+      await enforceExcelFilterIntegrity(tempPath, {
+        stores: parseFilterValues(options.storeFilter),
+      });
+      return {
+        reportType: 'SALES',
+        suggestedFilename: tempFilename,
+        tempFilePath: tempPath,
+        downloadedAt: new Date().toISOString(),
+      };
+    }
+
+    // If square button didn't produce a blob and blue Excel button is present, try blue Excel button
+    if ((await blueExcelBtn.isVisible().catch(() => false)) && excelBtn !== blueExcelBtn) {
+      await blueExcelBtn.click().catch(() => null);
+      const retryBlobBuf = await this.waitForCapturedBlob(page, 500, 15000);
+      if (retryBlobBuf) {
+        writeFileSync(tempPath, retryBlobBuf);
+        await enforceExcelFilterIntegrity(tempPath, {
+          stores: parseFilterValues(options.storeFilter),
+        });
+        return {
+          reportType: 'SALES',
+          suggestedFilename: tempFilename,
+          tempFilePath: tempPath,
+          downloadedAt: new Date().toISOString(),
+        };
       }
     }
 
@@ -768,7 +1028,6 @@ export class POSAdapter {
       }
     }
 
-    // If file was written via response, check if it exists
     if (existsSync(tempPath)) {
       await enforceExcelFilterIntegrity(tempPath, {
         stores: parseFilterValues(options.storeFilter),
@@ -786,50 +1045,41 @@ export class POSAdapter {
 
   /**
    * Download Inventory Onhand report.
+   * Optimized for multi-attempt 43s/58s/30s search retries, 16-Sloc filtering, and 6s Exporting... modal (00:40 - 04:20 in Video 1).
    */
   async downloadInventoryOnhand(
     options: InventoryDownloadOptions,
     credentials?: POSCredentials
   ): Promise<POSDownloadResult> {
-    const page = await this.ensureAuthenticated(credentials);
+    const page = await this.ensureAuthenticated(credentials, { preferredOutlet: options.preferredOutlet });
 
-    await page.goto(`${this.baseUrl}admin/report/inventory-onhand`, { waitUntil: 'domcontentloaded', timeout: 25000 });
-    await page.waitForTimeout(3000);
+    await this.navigateToReport(page, 'Inventory Onhand', 'admin/report/inventory-onhand');
 
-    // If redirected to login, re-authenticate and navigate again
-    if (page.url().includes('/home') || (await page.locator('#txtName').count()) > 0) {
-      await this.ensureAuthenticated(credentials);
-      await page.goto(`${this.baseUrl}admin/report/inventory-onhand`, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForTimeout(3000);
+    if (page.url().includes('/login') || page.url().includes('404') || page.url().includes('/home') || (await page.locator('#txtName').count().catch(() => 0)) > 0) {
+      await this.ensureAuthenticated(credentials, { preferredOutlet: options.preferredOutlet });
+      await this.navigateToReport(page, 'Inventory Onhand', 'admin/report/inventory-onhand');
     }
 
-    // Setup listener for inventory data response
     const inventoryResponsePromise = page.waitForResponse(
       (res) => res.url().includes('Get_RPT_InventoryOnHand') && res.status() === 200,
-      { timeout: 35000 }
+      { timeout: 60000 }
     ).catch(() => null);
 
-    // Apply store filter on page if provided
     const parsedStores = parseFilterValues(options.storeFilter);
     if (parsedStores.length === 1) {
       await this.setStoreFilter(page, parsedStores[0]);
     }
 
     // R4: Inventory Onhand Search Retry and Wait Logic
-    // Step 1: Wait for initial loading wave to complete
     await this.waitForLoadingWaveToEnd(page, 30000);
-
-    // Step 2: Wait ~3 seconds (mandatory settling window per requirement)
     await page.waitForTimeout(3000);
 
-    // Step 3: Check if data is already populated upon landing (Matching Hình 4)
     let populated = await this.isGridPopulated(page);
 
     if (populated) {
-      // Data already loaded — DO NOT click Search! (0 search clicks)
       console.log('Inventory Onhand grid already populated after loading wave — skipping search click.');
     } else {
-      // Step 4: Grid empty after initial load settlement — retry loop (up to 6 attempts)
+      // Multi-attempt search loop with 90s wave timeout (Video 1 Search #1 took 43s, Search #2 took 58s, Search #3 took 30s)
       const searchBtn = page.locator(
         'dx-button[icon="search"], button:has-text("Search"), .btn-search, button[type="submit"]'
       ).first();
@@ -837,7 +1087,6 @@ export class POSAdapter {
       for (let sAttempt = 1; sAttempt <= 6; sAttempt++) {
         console.log(`Inventory search attempt ${sAttempt}/6...`);
         if (await searchBtn.isVisible().catch(() => false)) {
-          // Wait if search button is temporarily disabled during query
           for (let w = 0; w < 10; w++) {
             if (await searchBtn.isEnabled().catch(() => true)) break;
             await page.waitForTimeout(500);
@@ -845,13 +1094,10 @@ export class POSAdapter {
           await searchBtn.click().catch(() => null);
         }
 
-        // Wait for loading wave indicator to complete
-        await this.waitForLoadingWaveToEnd(page, 45000);
-
-        // Wait ~3 seconds
+        // Wait up to 90s for equalizer wave / "Loading data" button to finish
+        await this.waitForLoadingWaveToEnd(page, 90000);
         await page.waitForTimeout(3000);
 
-        // Check if data arrived
         populated = await this.isGridPopulated(page);
         if (populated) {
           console.log(`Inventory data populated on search attempt ${sAttempt}.`);
@@ -860,7 +1106,7 @@ export class POSAdapter {
       }
     }
 
-    // Apply DevExpress Grid Filters on page if provided (R5)
+    // Apply DevExpress Grid Filters on page if provided (R5 — 03:07 to 04:08 in Video 1)
     const parsedSlocs = parseFilterValues(options.slocFilter);
     if (parsedSlocs.length) {
       await this.setGridFilter(page, 'slocId', parsedSlocs).catch((err) => {
@@ -876,9 +1122,11 @@ export class POSAdapter {
     }
 
     let tempFilename = resolveNamingTemplate(options.fileNameTemplate || 'Inventory_{{slocId}}_{{timestamp}}.xlsx', {
-      orgCode: options.orgCode || 'ORG', reportType: 'INVENTORY',
+      orgCode: options.orgCode || 'ORG',
+      reportType: 'INVENTORY',
       slocId: parsedSlocs.length === 0 ? 'ALL_SLOC' : parsedSlocs.length === 1 ? parsedSlocs[0] : `${parsedSlocs.length}SLOCS`,
-      itemCode: options.itemFilter || 'ALL', timestamp: new Date(),
+      itemCode: options.itemFilter || 'ALL',
+      timestamp: new Date(),
     });
 
     if (!tempFilename.toLowerCase().endsWith('.xlsx')) {
@@ -890,31 +1138,15 @@ export class POSAdapter {
     const tempPath = join(tempDir, tempFilename);
     mkdirSync(tempDir, { recursive: true });
 
-    // Try square Excel export button on grid toolbar first (matching Hình 3 & 4)
+    // Click square Excel export button on grid toolbar (04:11 in Video 1)
     const gridExportBtn = page.locator(
       POS_SELECTORS.inventoryOnhand.excelButton.primary + ', ' +
       POS_SELECTORS.inventoryOnhand.excelButton.fallback
     ).first();
 
     if (await gridExportBtn.isVisible().catch(() => false)) {
-      await page.evaluate(() => {
-        (window as any).__capturedBlobs = (window as any).__capturedBlobs || [];
-        const origCreate = URL.createObjectURL;
-        URL.createObjectURL = function(blob: any) {
-          if (blob instanceof Blob) {
-            const reader = new FileReader();
-            reader.onload = () => {
-              (window as any).__capturedBlobs.push({
-                type: blob.type,
-                size: blob.size,
-                dataUrl: reader.result
-              });
-            };
-            reader.readAsDataURL(blob);
-          }
-          return origCreate.apply(this, arguments as any);
-        };
-      }).catch(() => null);
+      await this.injectBlobInterceptor(page);
+      const downloadPromise = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
 
       await gridExportBtn.click().catch(() => null);
 
@@ -928,42 +1160,55 @@ export class POSAdapter {
         await exportMenuItem.click().catch(() => null);
       }
 
-      for (let tick = 0; tick < 10; tick++) {
-        await page.waitForTimeout(300);
-        const blobs = await page.evaluate(() => (window as any).__capturedBlobs || []).catch(() => []);
-        if (blobs.length > 0 && blobs[0].dataUrl) {
-          const base64Data = (blobs[0].dataUrl as string).split(',')[1];
-          if (base64Data) {
-            const buf = Buffer.from(base64Data, 'base64');
-            if (buf.length > 50) {
-              writeFileSync(tempPath, buf);
-              await enforceExcelFilterIntegrity(tempPath, {
-                stores: parsedStores,
-                slocs: parsedSlocs,
-                items: parsedItems,
-              });
-              return {
-                reportType: 'INVENTORY',
-                suggestedFilename: tempFilename,
-                tempFilePath: tempPath,
-                downloadedAt: new Date().toISOString(),
-              };
-            }
-          }
+      // Poll up to 20s so the 6-7s "Exporting..." modal finishes generating the Blob
+      const blobBuf = await this.waitForCapturedBlob(page, 50, 20000);
+      if (blobBuf) {
+        writeFileSync(tempPath, blobBuf);
+        await enforceExcelFilterIntegrity(tempPath, {
+          stores: parsedStores,
+          slocs: parsedSlocs,
+          items: parsedItems,
+        });
+        return {
+          reportType: 'INVENTORY',
+          suggestedFilename: tempFilename,
+          tempFilePath: tempPath,
+          downloadedAt: new Date().toISOString(),
+        };
+      }
+
+      const download = await downloadPromise;
+      if (download) {
+        try {
+          await download.saveAs(tempPath);
+          await enforceExcelFilterIntegrity(tempPath, {
+            stores: parsedStores,
+            slocs: parsedSlocs,
+            items: parsedItems,
+          });
+          return {
+            reportType: 'INVENTORY',
+            suggestedFilename: tempFilename,
+            tempFilePath: tempPath,
+            downloadedAt: new Date().toISOString(),
+          };
+        } catch (err) {
+          console.warn('Inventory download saveAs note:', (err as Error).message);
         }
       }
     }
 
-    // Direct in-page fetch for maximum reliability with retry loop
+    // Direct in-page API fallback for maximum reliability
     const storeParam = parsedStores.length === 1 ? parsedStores[0] : '';
     let items: any[] = [];
     for (let fAttempt = 1; fAttempt <= 5; fAttempt++) {
       try {
         const pageData = await page.evaluate(async (sId) => {
           const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-          const origin = window.location.origin;
+          const protocol = window.location.protocol;
+          const hostname = window.location.hostname;
           const user = localStorage.getItem('pos_user') || 'USER';
-          const url = `${origin}:8089/api/report/Get_RPT_InventoryOnHand?storeId=${encodeURIComponent(sId)}&userlogin=${encodeURIComponent(user)}`;
+          const url = `${protocol}//${hostname}:8089/api/report/Get_RPT_InventoryOnHand?storeId=${encodeURIComponent(sId)}&userlogin=${encodeURIComponent(user)}`;
           const res = await fetch(url, {
             headers: { 'Authorization': 'Bearer ' + token }
           });
@@ -973,7 +1218,6 @@ export class POSAdapter {
         items = Array.isArray(pageData) ? pageData : ((pageData as any)?.data || []);
         if (items.length > 0) break;
       } catch {
-        // Fallback to intercepted response
         const invResp = await inventoryResponsePromise;
         if (invResp) {
           const jsonData = await invResp.json();
@@ -986,7 +1230,6 @@ export class POSAdapter {
 
     if (items.length >= 0) {
       try {
-        // Apply Store filter
         if (parsedStores.length > 0) {
           const lowerStores = parsedStores.map((store) => store.toLowerCase());
           items = items.filter((it: any) =>
@@ -994,14 +1237,12 @@ export class POSAdapter {
           );
         }
 
-        // Apply Sloc / Kho filter
         if (parsedSlocs.length > 0) {
           items = items.filter((it: any) =>
             parsedSlocs.some((sloc) => String(it.slocId || '').toLowerCase().includes(sloc.toLowerCase()) || String(it.whsName || '').toLowerCase().includes(sloc.toLowerCase()))
           );
         }
 
-        // Apply Item / Sản phẩm filter
         if (parsedItems.length > 0) {
           items = items.filter((it: any) =>
             parsedItems.some((item) =>
@@ -1010,11 +1251,10 @@ export class POSAdapter {
             )
           );
         }
-        
-        // Build Excel Workbook
+
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Inventory Onhand');
-        
+
         worksheet.columns = [
           { header: 'Store Id', key: 'storeId', width: 14 },
           { header: 'Store Name', key: 'storeName', width: 28 },
@@ -1026,7 +1266,6 @@ export class POSAdapter {
           { header: 'Quantity', key: 'quantity', width: 16 },
         ];
 
-        // Format header
         const headerRow = worksheet.getRow(1);
         headerRow.font = { bold: true, color: { argb: 'FF1E293B' } };
         headerRow.fill = {
@@ -1070,7 +1309,6 @@ export class POSAdapter {
 
   /**
    * Set POS date filter (from or to).
-   * Supports DevExtreme dxDateBox API with DOM event synchronization without resetting.
    */
   async setDateFilter(page: Page, field: 'from' | 'to', isoDate: string): Promise<void> {
     try {
@@ -1083,7 +1321,6 @@ export class POSAdapter {
       const formatted = format(date, 'dd/MM/yyyy');
       const targetIndex = field === 'from' ? 0 : 1;
 
-      // Mode A: DevExtreme dxDateBox widget API + DOM property sync
       try {
         const apiSuccess = await page.evaluate(({ index, year, month, day, formattedStr }) => {
           const boxes = document.querySelectorAll('dx-date-box, .dx-datebox');
@@ -1120,7 +1357,6 @@ export class POSAdapter {
         // Fallback to DOM actions below
       }
 
-      // Mode B: Playwright DOM locator fallback with events
       const dateBox = page.locator('dx-date-box, .dx-datebox').nth(targetIndex);
       if (await dateBox.isVisible().catch(() => false)) {
         const input = dateBox.locator('input.dx-texteditor-input, input').first();
@@ -1141,7 +1377,6 @@ export class POSAdapter {
 
   /**
    * Filter DevExpress DataGrid on the page.
-   * Public interface contract per PROJECT.md / SCOPE.md.
    */
   async setGridFilter(
     page: Page,
@@ -1175,7 +1410,7 @@ export class POSAdapter {
   }
 
   /**
-   * Wait for DevExtreme load panel / equalizer wave indicator overlay to detach/hide.
+   * Wait for DevExtreme load panel, equalizer wave indicator, or "Loading data" button state to finish.
    */
   async waitForLoadingWaveToEnd(page: Page, timeoutMs = 30000): Promise<void> {
     const waveSelectors = [
@@ -1184,6 +1419,8 @@ export class POSAdapter {
       '.loading-wave',
       '[class*="wave"]',
       '.dx-overlay-wrapper:has(.dx-loadpanel)',
+      'button:has-text("Loading data")',
+      'dx-button:has-text("Loading data")',
     ].join(', ');
 
     try {
@@ -1191,7 +1428,6 @@ export class POSAdapter {
       if (await waveLocator.isVisible().catch(() => false)) {
         await waveLocator.waitFor({ state: 'hidden', timeout: timeoutMs }).catch(() => null);
       }
-      // Small debounce for staggered chunk settlement (Hình 4)
       await page.waitForTimeout(300);
       if (await waveLocator.isVisible().catch(() => false)) {
         await waveLocator.waitFor({ state: 'hidden', timeout: timeoutMs }).catch(() => null);

@@ -20,12 +20,10 @@ interface EnterpriseState {
   saveProfile: (profile: Partial<EnterpriseProfile> & {
     name: string;
     code: string;
-    description?: string;
-    erpType?: ERPType;
-    erpUrl?: string;
-    posUrl?: string;
-    companyName?: string;
-    companySchema?: string;
+    erpType: ERPType;
+    erpUrl: string;
+    companyName: string;
+    companySchema: string;
   }) => Promise<EnterpriseProfile>;
   deleteProfile: (id: string) => Promise<void>;
   getActiveProfile: () => EnterpriseProfile | undefined;
@@ -149,14 +147,12 @@ export const useEnterpriseStore = create<EnterpriseState>((set, get) => ({
         id: newId,
         name: input.name,
         code: input.code,
-        description: input.description || '',
-        erpType: input.erpType || 'SAP_B1',
-        erpUrl: input.erpUrl || '',
-        posUrl: input.posUrl || '',
+        erpType: input.erpType,
+        erpUrl: input.erpUrl,
         server: input.server || '',
         database: input.database || '',
-        companyName: input.companyName || input.name,
-        companySchema: input.companySchema || input.code,
+        companyName: input.companyName,
+        companySchema: input.companySchema,
         storeMappings: input.storeMappings || [],
         slocMappings: input.slocMappings || [],
         namingTemplate: input.namingTemplate || '{{orgCode}}_{{reportType}}_{{fromDate}}_{{toDate}}.xlsx',

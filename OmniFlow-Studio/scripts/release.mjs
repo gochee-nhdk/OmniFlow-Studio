@@ -204,15 +204,16 @@ async function main() {
     }
   }
 
+  const packagingEnv = { ...process.env };
+  if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) {
+    packagingEnv.GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  }
+
   log('PACKAGE', isDryRun ? 'Executing dry-run directory packaging...' : 'Executing Electron installer & zip packaging...');
   if (isDryRun) {
-    runCommand('pnpm', ['--filter', '@fm/local-agent', 'exec', 'electron-builder', '--dir'], ROOT_DIR, {
-      GH_TOKEN: process.env.GH_TOKEN || process.env.GITHUB_TOKEN || 'dummy_token',
-    });
+    runCommand('pnpm', ['--filter', '@fm/local-agent', 'exec', 'electron-builder', '--dir'], ROOT_DIR, packagingEnv);
   } else {
-    runCommand('pnpm', ['--filter', '@fm/local-agent', 'build:installer'], ROOT_DIR, {
-      GH_TOKEN: process.env.GH_TOKEN || process.env.GITHUB_TOKEN || 'dummy_token',
-    });
+    runCommand('pnpm', ['--filter', '@fm/local-agent', 'build:installer'], ROOT_DIR, packagingEnv);
   }
 
   // 5. Inspect Release Output Directory

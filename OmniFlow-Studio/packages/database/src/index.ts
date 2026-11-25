@@ -3,8 +3,8 @@
 // Zero native compilation dependencies, robust local persistence.
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, mkdirSync, copyFileSync, statSync, readdirSync, unlinkSync } from 'fs';
+import { dirname, join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { LogRedactor } from '@fm/security';
 import { SCHEMA_SQL } from './schema';
@@ -69,8 +69,10 @@ export interface ErrorLogRow {
 
 export class FMDatabase {
   private db: DatabaseSync;
+  private dbPath: string;
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath;
     const dir = dirname(dbPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
@@ -84,6 +86,105 @@ export class FMDatabase {
 
   private initialize(): void {
     this.db.exec(SCHEMA_SQL);
+  }
+
+  /**
+   * Execute a WAL checkpoint to flush all pending WAL frames into the main database file.
+   */
+  checkpoint(): void {
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  }
+
+  /**
+   * Creates a point-in-time snapshot backup of fmauto.sqlite after flushing WAL.
+   * Rotates older snapshots so at most maxRetained files are kept in the directory.
+   */
+  createBackup(backupDir?: string, maxRetained = 10): { backupPath: string; timestamp: string; sizeBytes: number } {
+    if (this.dbPath === ':memory:') {
+      throw new Error('Cannot create file backup of an in-memory database (:memory:)');
+    }
+
+    const targetDir = backupDir || (process.env.APP_DATA_DIR
+      ? join(process.env.APP_DATA_DIR, 'backups', 'snapshots')
+      : join(dirname(this.dbPath), 'backups', 'snapshots'));
+
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true });
+    }
+
+    // 1. Flush WAL to ensure consistent snapshot on disk
+    this.checkpoint();
+
+    // 2. Generate timestamp and snapshot destination
+    const timestamp = new Date().toISOString();
+    const fileStamp = timestamp.replace(/[:.]/g, '-');
+    const backupPath = join(targetDir, `fmauto-snapshot-${fileStamp}.sqlite`);
+
+    // 3. Cleanly copy the flushed database file
+    copyFileSync(this.dbPath, backupPath);
+    const sizeBytes = statSync(backupPath).size;
+
+    // 4. Automatic rotation: retain at most maxRetained snapshots
+    if (maxRetained > 0) {
+      try {
+        const existing = readdirSync(targetDir)
+          .filter((name) => name.startsWith('fmauto-snapshot-') && name.endsWith('.sqlite'))
+          .map((name) => {
+            const fullPath = join(targetDir, name);
+            const stats = statSync(fullPath);
+            return { name, fullPath, mtimeMs: stats.mtimeMs };
+          })
+          .sort((a, b) => a.mtimeMs - b.mtimeMs); // oldest first
+
+        if (existing.length > maxRetained) {
+          const toRemove = existing.slice(0, existing.length - maxRetained);
+          for (const item of toRemove) {
+            try {
+              unlinkSync(item.fullPath);
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    return { backupPath, timestamp, sizeBytes };
+  }
+
+  /**
+   * Lists all existing SQLite snapshot backups ordered newest first.
+   */
+  listSnapshots(backupDir?: string): Array<{ fileName: string; filePath: string; timestamp: string; sizeBytes: number }> {
+    const targetDir = backupDir || (process.env.APP_DATA_DIR
+      ? join(process.env.APP_DATA_DIR, 'backups', 'snapshots')
+      : join(dirname(this.dbPath), 'backups', 'snapshots'));
+
+    if (!existsSync(targetDir)) return [];
+
+    try {
+      const files = readdirSync(targetDir)
+        .filter((name) => name.startsWith('fmauto-snapshot-') && name.endsWith('.sqlite'))
+        .map((name) => {
+          const fullPath = join(targetDir, name);
+          const stats = statSync(fullPath);
+          return {
+            fileName: name,
+            filePath: fullPath,
+            timestamp: stats.mtime.toISOString(),
+            sizeBytes: stats.size,
+            mtimeMs: stats.mtimeMs,
+          };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      return files.map(({ fileName, filePath, timestamp, sizeBytes }) => ({
+        fileName,
+        filePath,
+        timestamp,
+        sizeBytes,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   // ---- Settings ----

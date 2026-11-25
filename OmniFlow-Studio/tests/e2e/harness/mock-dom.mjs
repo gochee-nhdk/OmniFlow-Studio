@@ -246,6 +246,34 @@ export class MockElement {
     this.dispatchEvent(new MockEvent('blur', { bubbles: false }));
   }
 
+  attachShadow(options = { mode: 'open' }) {
+    this.shadowRoot = new MockElement('shadow-root', this.ownerDocument);
+    this.shadowRoot.host = this;
+    this.shadowRoot.mode = options.mode || 'open';
+    return this.shadowRoot;
+  }
+
+  getBoundingClientRect() {
+    const x = typeof this._x === 'number' ? this._x : 100;
+    const y = typeof this._y === 'number' ? this._y : 100;
+    const w = typeof this._width === 'number' ? this._width : 120;
+    const h = typeof this._height === 'number' ? this._height : 36;
+    return {
+      x,
+      y,
+      width: w,
+      height: h,
+      top: y,
+      left: x,
+      right: x + w,
+      bottom: y + h,
+    };
+  }
+
+  scrollIntoView() {
+    this.__scrolledIntoView = true;
+  }
+
   // Selector matching
   matches(selector) {
     return matchSelector(this, selector);
@@ -542,6 +570,10 @@ export class MockDocument {
   }
 
   createElement(tagName) {
+    return new MockElement(tagName, this);
+  }
+
+  createElementNS(ns, tagName) {
     return new MockElement(tagName, this);
   }
 

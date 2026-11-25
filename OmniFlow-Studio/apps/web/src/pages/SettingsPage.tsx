@@ -410,11 +410,13 @@ export default function SettingsPage() {
                           <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
                             {p.code}
                           </span>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                            {p.erpType}
+                          </span>
                         </div>
                         <h4 className="font-bold text-slate-900 text-sm mt-2">{p.name}</h4>
-                        {p.exportPath && (
-                          <div className="text-xs text-slate-500 font-mono mt-1 truncate max-w-xs">{p.exportPath}</div>
-                        )}
+                        <div className="text-xs text-slate-500 font-mono mt-1">{p.erpUrl}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">Schema: <span className="text-slate-700 font-mono">{p.companySchema}</span></div>
                       </div>
                       {isActive ? (
                         <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">

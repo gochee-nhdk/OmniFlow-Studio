@@ -122,25 +122,24 @@ export default function Layout() {
             </span>
           </button>
 
-          {/* Quick Browser CDP Attach Button */}
+          {/* Dedicated Isolated Automation Browser Launch Button */}
           <button
             onClick={async () => {
               try {
-                const res = await invoke<{ success: boolean; message?: string; error?: string }>('browser:enable-active-attach');
-                if (!res?.success) throw new Error(res?.error || 'Không thể khởi chạy trình duyệt với cổng CDP.');
-                alert(res?.message || 'Đã kích hoạt chế độ gắn kết trình duyệt cổng 9222.');
+                const res = await invoke<{ success: boolean; message?: string; error?: string }>('browser:launch');
+                if (!res?.success) throw new Error(res?.error || 'Không thể mở trình duyệt automation riêng biệt.');
               } catch (e: any) {
-                alert('Lỗi kết nối trình duyệt: ' + (e?.message || e));
+                alert('Lỗi khởi chạy trình duyệt: ' + (e?.message || e));
               }
             }}
             className="w-full mt-2 p-1.5 rounded-md bg-blue-50 border border-blue-200 hover:bg-blue-100 text-left transition-colors cursor-pointer flex items-center justify-between text-blue-700"
-            title="Khởi chạy trình duyệt với cổng debug 9222 để gắn kết trực tiếp phiên làm việc"
+            title="Khởi chạy phiên trình duyệt automation riêng biệt cách ly an toàn của OmniFlow"
           >
             <div className="flex items-center gap-1.5 min-w-0">
               <Globe className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-              <div className="truncate text-[11px] font-medium">Gắn vào Trình duyệt Đang Mở</div>
+              <div className="truncate text-[11px] font-medium">Mở Trình duyệt Automation</div>
             </div>
-            <span className="text-[9px] font-mono bg-blue-100 text-blue-800 px-1 py-0.5 rounded">CDP 9222</span>
+            <span className="text-[9px] font-mono bg-blue-100 text-blue-800 px-1 py-0.5 rounded">Cách ly</span>
           </button>
         </div>
 

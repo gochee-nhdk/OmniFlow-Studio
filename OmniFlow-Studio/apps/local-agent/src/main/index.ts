@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron';
 import { join, resolve, dirname } from 'path';
 import { mkdirSync, appendFileSync, existsSync } from 'fs';
 import { exec } from 'child_process';
@@ -68,9 +68,12 @@ process.on('unhandledRejection', (reason) => {
 log('Electron main process starting up');
 log(`Portable data directory configured at: ${portableDataDir}`);
 
+let tray: Tray | null = null;
+let isQuitting = false;
 let isBrowserShutdownComplete = false;
 let isBrowserShutdownInProgress = false;
 app.on('before-quit', (event) => {
+  isQuitting = true;
   if (isBrowserShutdownComplete || isBrowserShutdownInProgress) return;
   event.preventDefault();
   isBrowserShutdownInProgress = true;
@@ -105,6 +108,64 @@ function ensureDataDir(): void {
   mkdirSync(join(portableDataDir, 'Temp'), { recursive: true });
   log(`Data directory ensured: ${DATA_DIR}`);
   log(`Database path: ${DB_PATH}`);
+}
+
+function createTray(): void {
+  if (tray) return;
+  const iconCandidate = join(__dirname, '../../../../assets/app-icon.ico');
+  const icon = existsSync(iconCandidate)
+    ? nativeImage.createFromPath(iconCandidate)
+    : nativeImage.createEmpty();
+
+  tray = new Tray(icon);
+  tray.setToolTip('OmniFlow Studio');
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Hiện OmniFlow Studio',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        } else {
+          createWindow();
+        }
+      },
+    },
+    {
+      label: 'Ẩn cửa sổ',
+      click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.hide();
+        }
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Thoát ứng dụng',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    } else {
+      createWindow();
+    }
+  });
 }
 
 function createWindow(): void {
@@ -170,10 +231,19 @@ function createWindow(): void {
     mainWindow?.focus();
   });
 
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      log('mainWindow close prevented — minimizing to system tray');
+      mainWindow?.hide();
+    } else {
+      log('mainWindow closing cleanly during app quit');
+    }
+  });
+
   mainWindow.on('closed', () => {
-    log('mainWindow closed — quitting application process cleanly');
+    log('mainWindow closed');
     mainWindow = null;
-    app.quit();
   });
 }
 
@@ -238,6 +308,7 @@ app.whenReady().then(() => {
   try {
     ensureDataDir();
     ensureDesktopShortcut();
+    createTray();
     log(`Registering IPC handlers with DB_PATH: ${DB_PATH}`);
     registerAll(DB_PATH);
     log('IPC handlers registered successfully');
@@ -261,12 +332,15 @@ app.on('second-instance', () => {
 });
 
 app.on('window-all-closed', () => {
-  log('All windows closed. Quitting app process.');
-  app.quit();
+  log(`All windows closed. isQuitting=${isQuitting}`);
+  if (isQuitting) {
+    app.quit();
+  }
 });
 
 app.on('before-quit', () => {
   log('App before-quit');
+  isQuitting = true;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.destroy();
   }
@@ -274,5 +348,9 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   log('App will-quit: exiting process cleanly');
+  try {
+    tray?.destroy();
+    tray = null;
+  } catch {}
   process.exit(0);
 });

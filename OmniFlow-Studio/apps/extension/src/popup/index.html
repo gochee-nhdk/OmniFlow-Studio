@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniFlow Studio</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>OmniFlow Studio</h1>
+        <span>Standalone Extension v2.1</span>
+      </div>
+    </div>
+    <div id="agentBadge" class="agent-badge online">
+      <span class="dot"></span>
+      <span id="agentStatusText">100% Extension • Sẵn sàng</span>
+    </div>
+  </header>
+
+  <!-- Network Metrics -->
+  <section class="network-grid">
+    <div class="network-card">
+      <div class="network-title">
+        <span>POS RPFO (200)</span>
+        <div id="posIndicator" class="status-indicator"></div>
+      </div>
+      <div id="posLatency" class="latency-val">-- ms</div>
+    </div>
+    <div class="network-card">
+      <div class="network-title">
+        <span>SAP B1 (210)</span>
+        <div id="sapIndicator" class="status-indicator"></div>
+      </div>
+      <div id="sapLatency" class="latency-val">-- ms</div>
+    </div>
+  </section>
+
+  <!-- Realtime Progress Bar -->
+  <section id="progressSection" class="progress-container hidden">
+    <div class="progress-header">
+      <div class="progress-title">
+        <span id="progressSpinner" class="spinner"></span>
+        <span id="progressWorkflowName">Đang xử lý quy trình...</span>
+      </div>
+      <div class="progress-header-right">
+        <span id="progressPercent" class="progress-percent">0%</span>
+        <button id="btnStopWorkflow" class="stop-btn" title="Dừng quy trình đang chạy">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+          </svg>
+          <span>Dừng</span>
+        </button>
+      </div>
+    </div>
+    <div class="progress-track">
+      <div id="progressBar" class="progress-fill"></div>
+    </div>
+    <div id="progressStep" class="progress-step">Khởi tạo...</div>
+  </section>
+
+  <!-- Quick Actions -->
+  <div class="section-label">Tác vụ nhanh</div>
+  <main class="actions-grid">
+    <button id="btnDailyAll" class="action-btn primary" title="Chạy quy trình Daily Procurement: Tải Doanh số + Tồn kho + SAP">
+      <div class="action-btn-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+        <strong>Daily Procurement</strong>
+      </div>
+      <div class="action-desc">Tự động hóa toàn trình: Doanh số POS, Tồn kho 12 Kho &amp; SAP SLD</div>
+    </button>
+
+    <button id="btnSales" class="action-btn" title="Xuất dữ liệu Sales Transaction Detail">
+      <div class="action-btn-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"></line>
+          <line x1="12" y1="20" x2="12" y2="4"></line>
+          <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
+        <strong>Doanh số POS</strong>
+      </div>
+      <div class="action-desc">Sales Transaction Detail</div>
+    </button>
+
+    <button id="btnInventory" class="action-btn" title="Xuất dữ liệu Inventory Onhand 12 kho">
+      <div class="action-btn-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+        <strong>Tồn kho POS 12 Kho</strong>
+      </div>
+      <div class="action-desc">Lọc chính xác 12 kho SLOC</div>
+    </button>
+
+    <button id="btnSap" class="action-btn" title="Đăng nhập SAP và chạy truy vấn báo cáo">
+      <div class="action-btn-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+          <path d="M9 22v-4h6v4"></path>
+          <path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"></path>
+        </svg>
+        <strong>SAP Business One</strong>
+      </div>
+      <div class="action-desc">SLD Logon &amp; Pricelist Export</div>
+    </button>
+
+    <button id="btnPosCheck" class="action-btn" title="Kiểm tra đăng nhập & outlet POS">
+      <div class="action-btn-header">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <strong>Kiểm tra POS</strong>
+      </div>
+      <div class="action-desc">Test kết nối &amp; Outlet</div>
+    </button>
+  </main>
+
+  <!-- Navigation / Footer -->
+  <footer class="footer-nav">
+    <button id="btnOpenSidePanel" class="nav-btn primary-nav" title="Mở bảng điều khiển Side Panel">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+        <line x1="15" y1="3" x2="15" y2="21"></line>
+      </svg>
+      <span>Mở Bảng điều khiển</span>
+    </button>
+    <button id="btnRefresh" class="nav-btn icon-btn" title="Kiểm tra kết nối POS / SAP" aria-label="Kiểm tra kết nối POS / SAP">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+      </svg>
+    </button>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

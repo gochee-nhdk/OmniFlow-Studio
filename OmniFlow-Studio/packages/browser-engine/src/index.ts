@@ -3,8 +3,9 @@
 
 import { chromium, BrowserContext, Page, Download } from 'playwright';
 import { join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
+import { VisualCursorManager, VisualCursorOptions } from './visual-cursor';
 
 export type BrowserProfile = 'SAP' | 'POS';
 export type BrowserSessionMode = 'not-started' | 'dedicated' | 'attached';
@@ -15,6 +16,8 @@ export function getProfileBase(userDataDir?: string): string {
   if (process.env['PORTABLE_DATA_DIR']) return join(process.env['PORTABLE_DATA_DIR'], 'browser-profiles');
   if (process.env['PORTABLE_EXECUTABLE_DIR']) return join(process.env['PORTABLE_EXECUTABLE_DIR'], 'data', 'browser-profiles');
   if (process.env['OMNIFLOW_PORTABLE_DATA']) return join(process.env['OMNIFLOW_PORTABLE_DATA'], 'browser-profiles');
+  const localDataDir = join(process.cwd(), 'data');
+  if (existsSync(localDataDir)) return join(localDataDir, 'browser-profiles');
   const appData = process.env['APPDATA'] || process.env['HOME'] || '.';
   return join(appData, 'browser-profiles');
 }
@@ -28,24 +31,31 @@ export interface BrowserManagerOptions {
   allowCdpAttach?: boolean;
   cdpPorts?: number[];
   onProgress?: (status: string) => void;
+  visualCursor?: boolean;
+  cursorSpeed?: number;
 }
 
 export class BrowserManager {
   private readonly contexts = new Map<BrowserProfile, BrowserContext>();
   private readonly profilePages = new Map<BrowserProfile, Page>();
+  private readonly pages = this.profilePages;
   private sharedContext?: BrowserContext;
   private attachedOverCDP = false;
   private readonly downloadDir: string;
   private readonly profileBase: string;
   private readonly headless: boolean;
+  private readonly visualCursor: boolean;
+  private readonly cursorSpeed?: number;
   private readonly onProgress?: (status: string) => void;
   private readonly cdpPorts: number[];
-  private readonly allowCdpAttach: boolean;
+  private allowCdpAttach: boolean;
 
   constructor(options: BrowserManagerOptions) {
     this.downloadDir = options.downloadDir;
     this.profileBase = getProfileBase(options.userDataDir);
     this.headless = options.headless ?? false;
+    this.visualCursor = options.visualCursor !== undefined ? options.visualCursor : (!this.headless);
+    this.cursorSpeed = options.cursorSpeed;
     this.onProgress = options.onProgress;
     this.allowCdpAttach = options.allowCdpAttach ?? false;
     this.cdpPorts = options.cdpPorts && options.cdpPorts.length > 0 ? options.cdpPorts : [9222, 9223, 9229];
@@ -55,6 +65,10 @@ export class BrowserManager {
   getSessionMode(): BrowserSessionMode {
     if (!this.sharedContext) return 'not-started';
     return this.attachedOverCDP ? 'attached' : 'dedicated';
+  }
+
+  setAllowCdpAttach(bool: boolean): void {
+    this.allowCdpAttach = bool;
   }
 
   private report(status: string): void {
@@ -89,6 +103,47 @@ export class BrowserManager {
     });
   }
 
+  private recoverStaleLock(profileDir: string): void {
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+    for (const file of lockFiles) {
+      const lockPath = join(profileDir, file);
+      if (existsSync(lockPath)) {
+        try {
+          unlinkSync(lockPath);
+          this.report(`[BrowserManager] Recovered stale ${file} in profile directory.`);
+        } catch {
+          // File is active or locked by another running process
+        }
+      }
+    }
+  }
+
+  /**
+   * Removes Chromium/Edge session-restore artifacts from the Default profile sub-directory
+   * so that the browser starts clean and never re-opens a stale /home or 404 tab.
+   */
+  private clearStaleSessionFiles(profileDir: string): void {
+    const defaultDir = join(profileDir, 'Default');
+    const sessionDirs = ['Sessions', 'Sessions_Encrypted', 'EdgeSessions'];
+    const sessionFiles = ['Last Session', 'Last Tabs', 'Current Session', 'Current Tabs'];
+    for (const name of sessionDirs) {
+      const p = join(defaultDir, name);
+      if (existsSync(p)) {
+        try {
+          const { rmSync } = require('fs');
+          rmSync(p, { recursive: true, force: true });
+          this.report(`[BrowserManager] Cleared stale session directory: ${name}`);
+        } catch { /* ignore */ }
+      }
+    }
+    for (const name of sessionFiles) {
+      const p = join(defaultDir, name);
+      if (existsSync(p)) {
+        try { unlinkSync(p); } catch { /* ignore */ }
+      }
+    }
+  }
+
   private async attachOrLaunchBrowser(): Promise<BrowserContext> {
     if (this.sharedContext) {
       try {
@@ -114,10 +169,15 @@ export class BrowserManager {
           const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(800) });
           if (!response.ok) continue;
           const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-          const context = browser.contexts()[0] || await browser.newContext({ acceptDownloads: true });
+          const context = browser.contexts()[0] || await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true });
           this.sharedContext = context;
           this.attachedOverCDP = true;
           this.bindContextLifecycle(context);
+          await VisualCursorManager.install(context, {
+            enabled: this.visualCursor,
+            headless: this.headless,
+            speed: this.cursorSpeed,
+          });
           this.report(`[BrowserManager] Explicitly attached to browser on CDP port ${port}; cookies and profile are shared.`);
           return context;
         } catch {}
@@ -126,6 +186,10 @@ export class BrowserManager {
 
     const profileDir = join(this.profileBase, 'omniflow-workspace');
     mkdirSync(profileDir, { recursive: true });
+    this.recoverStaleLock(profileDir);
+    // Clear stale session-restore files so the browser never re-opens
+    // tabs cached from a previous /home or bad-URL session.
+    this.clearStaleSessionFiles(profileDir);
     const commonOptions = {
       headless: this.headless,
       acceptDownloads: true,
@@ -134,13 +198,32 @@ export class BrowserManager {
       ignoreHTTPSErrors: true,
       locale: 'vi-VN',
       timezoneId: 'Asia/Ho_Chi_Minh',
-      args: ['--remote-debugging-port=9222', '--start-maximized', '--disable-blink-features=AutomationControlled', '--no-first-run', '--no-default-browser-check'],
+      args: [
+        '--start-maximized',
+        '--disable-blink-features=AutomationControlled',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-infobars',
+        '--test-type',
+        '--disable-sync',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-component-update',
+        '--password-store=basic',
+        '--use-mock-keychain',
+        '--no-pings',
+        // Prevent session restore: never re-open previously cached tabs
+        '--restore-last-session=false',
+        '--no-session-restore',
+      ],
     };
     const preferred = this.detectSystemDefaultBrowser().channel;
     const candidates: Array<'chrome' | 'msedge' | undefined> = [preferred, preferred === 'msedge' ? 'chrome' : 'msedge', undefined];
     let lastError: unknown;
     for (const channel of candidates) {
       try {
+        this.recoverStaleLock(profileDir);
         const context = await chromium.launchPersistentContext(profileDir, {
           ...commonOptions,
           ...(channel ? { channel } : {}),
@@ -148,10 +231,16 @@ export class BrowserManager {
         this.sharedContext = context;
         this.attachedOverCDP = false;
         this.bindContextLifecycle(context);
+        await VisualCursorManager.install(context, {
+          enabled: this.visualCursor,
+          headless: this.headless,
+          speed: this.cursorSpeed,
+        });
         this.report(`[BrowserManager] Started an isolated ${channel || 'Chromium'} window with a persistent OmniFlow profile.`);
         return context;
       } catch (error) {
         lastError = error;
+        this.recoverStaleLock(profileDir);
       }
     }
     throw new Error(`Không thể mở trình duyệt automation riêng. Hãy đóng cửa sổ automation OmniFlow đang bị treo rồi thử lại. ${(lastError as Error)?.message || ''}`);
@@ -180,9 +269,20 @@ export class BrowserManager {
     const context = await this.attachOrLaunchBrowser();
     const openPages = context.pages().filter((page) => !page.isClosed());
     const alreadyAssignedPages = new Set(this.profilePages.values());
+    // Only reuse truly blank tabs — ignore any session-restored /home or stale URL tabs
     const blankPage = openPages.find((page) =>
       !alreadyAssignedPages.has(page) && /^about:blank$|^(chrome|edge):\/\/newtab\//i.test(page.url())
     );
+    // If there are session-restored stale tabs (non-blank, non-assigned), close them first
+    for (const p of openPages) {
+      if (!alreadyAssignedPages.has(p) && p !== blankPage) {
+        const url = p.url();
+        if (!/^about:blank$|^(chrome|edge):\/\/newtab\//i.test(url)) {
+          this.report(`[BrowserManager] Closing stale session-restored tab: ${url}`);
+          await p.close().catch(() => null);
+        }
+      }
+    }
     const page = blankPage || await context.newPage();
     this.profilePages.set(profile, page);
     this.contexts.set(profile, context);
@@ -192,6 +292,7 @@ export class BrowserManager {
     page.on('crash', () => {
       this.report(`[BrowserManager] ${profile} tab crashed; it will be recreated on the next operation.`);
     });
+    VisualCursorManager.ensurePrototypesPatched(page);
     await page.bringToFront().catch(() => null);
     return page;
   }
@@ -237,7 +338,10 @@ export class BrowserManager {
     await this.closeAll();
     this.sharedContext = undefined;
     this.attachedOverCDP = false;
-    if (context && !isAttached && this.headless) {
+    this.contexts.clear();
+    this.profilePages.clear();
+    this.pages.clear();
+    if (context && !isAttached) {
       await context.close().catch(() => null);
     } else if (context && isAttached) {
       // Disconnect CDP socket only — leaves user's browser/tabs alive on screen.
@@ -254,3 +358,6 @@ export class BrowserManager {
     return this.getContext(profile);
   }
 }
+
+export * from './cursor-script';
+export * from './visual-cursor';

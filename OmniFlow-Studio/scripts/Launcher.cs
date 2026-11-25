@@ -47,7 +47,6 @@ namespace OmniFlowStudio
                 // Check for existing active OmniFlow Studio / Electron window
                 // Only inspect and manage electron processes belonging to OmniFlow Studio's path!
                 Process[] procs = Process.GetProcessesByName("electron");
-                bool foundWindow = false;
 
                 foreach (Process p in procs)
                 {
@@ -66,7 +65,6 @@ namespace OmniFlowStudio
                                     ShowWindow(p.MainWindowHandle, SW_SHOW);
                                 }
                                 SetForegroundWindow(p.MainWindowHandle);
-                                foundWindow = true;
                                 return;
                             }
                         }
@@ -74,22 +72,9 @@ namespace OmniFlowStudio
                     catch { }
                 }
 
-                // If procs belonging to OmniFlow Studio exist without MainWindowHandle (zombies), kill them cleanly
-                if (!foundWindow && procs.Length > 0)
-                {
-                    foreach (Process p in procs)
-                    {
-                        try
-                        {
-                            if (IsProcessUnderAppDir(p, appDir, localAgentDir, electronExe))
-                            {
-                                p.Kill();
-                            }
-                        }
-                        catch { }
-                    }
-                    System.Threading.Thread.Sleep(300);
-                }
+                // Do not kill background tray processes. If an Electron instance is already running
+                // in the background or system tray without a visible top-level window, starting electron
+                // will trigger the single-instance lock (second-instance event) and restore the window cleanly.
 
                 if (string.IsNullOrEmpty(electronExe) || !File.Exists(electronExe))
                 {

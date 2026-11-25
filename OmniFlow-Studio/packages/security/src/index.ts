@@ -44,10 +44,7 @@ export function getSecurityDir(): string {
   }
 
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    const exeDataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
-    if (fs.existsSync(exeDataDir)) {
-      return path.join(exeDataDir, 'security');
-    }
+    return path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data', 'security');
   }
 
   const localDataDir = path.join(process.cwd(), 'data');

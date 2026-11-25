@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniFlow Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="sidepanel-header">
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">OmniFlow Studio</div>
+        <div class="brand-subtitle">Standalone Extension v2.1</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div id="sideStatusBadge" class="status-badge online">
+        <span class="status-dot"></span>
+        <span id="sideStatusText">Sẵn sàng</span>
+      </div>
+      <button id="btnThemeToggle" class="theme-toggle-btn" title="Chuyển giao diện Sáng / Tối" aria-label="Chuyển giao diện Sáng / Tối">
+        <svg id="iconSun" class="hidden" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+        </svg>
+        <svg id="iconMoon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="tabs-bar">
+    <button class="tab-btn" data-tab="tab-agent" aria-label="Agent trình duyệt">
+      <span aria-hidden="true">✦</span><span>Agent</span>
+    </button>
+    <button class="tab-btn active" data-tab="tab-control">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>
+        <line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>
+        <line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>
+        <line x1="2" y1="14" x2="6" y2="14"></line><line x1="10" y1="8" x2="14" y2="8"></line>
+        <line x1="18" y1="16" x2="22" y2="16"></line>
+      </svg>
+      <span>Điều khiển</span>
+    </button>
+    <button class="tab-btn" data-tab="tab-history">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <span>Tệp tin</span>
+    </button>
+    <button class="tab-btn" data-tab="tab-logs">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line>
+      </svg>
+      <span>Console</span>
+    </button>
+    <button class="tab-btn" data-tab="tab-settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+      <span>Cấu hình</span>
+    </button>
+  </nav>
+
+  <!-- Tab Content Body -->
+  <main class="tab-content">
+    <section id="tab-agent" class="tab-pane">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Agent thao tác trình duyệt</span><span class="badge-muted">DOM + SOP</span></div>
+        <p class="agent-help">Agent đọc nhãn và trạng thái phần tử trên tab hiện tại. Ảnh màn hình chỉ dùng làm ngữ cảnh để bạn xem lại; thao tác chỉ chạy sau khi bạn duyệt kế hoạch.</p>
+        <div class="form-group">
+          <label class="form-label" for="agentTask">Bạn muốn làm gì?</label>
+          <textarea id="agentTask" class="form-control agent-task" rows="3" placeholder="Ví dụ: Xuất báo cáo doanh số tuần trước theo quy trình chuẩn"></textarea>
+        </div>
+        <div class="agent-actions">
+          <button id="btnAgentScan" class="btn btn-secondary">Đọc trang</button>
+          <button id="btnAgentPlan" class="btn btn-primary">Lập kế hoạch</button>
+        </div>
+        <div id="agentStatus" class="agent-status" role="status">Chưa quét tab.</div>
+        <img id="agentScreenshot" class="agent-screenshot hidden" alt="Ảnh tab trình duyệt được agent chụp">
+        <div id="agentPlan" class="agent-plan hidden"></div>
+        <button id="btnAgentExecute" class="btn btn-primary agent-execute hidden">Duyệt và thực hiện</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Quy trình chuẩn đã học</span><span class="badge-muted">Theo PDF đã cung cấp</span></div>
+        <ul class="agent-routines">
+          <li><strong>POS tồn kho:</strong> FM04 → More → Report → Inventory Onhand → Search → lọc 12 SLOC → Excel.</li>
+          <li><strong>POS doanh số:</strong> FM04 → More → Report → Sales Transaction Detail → tuần trước → Search → Excel.</li>
+          <li><strong>SAP pricelist:</strong> công ty FM_PRO → Danh Mục → item NCC pricelist_non_Asset → .xlsx → xác nhận tải.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- TAB 1: WORKFLOW CONTROL -->
+    <section id="tab-control" class="tab-pane active">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Khởi chạy quy trình</span>
+          <span id="quickStatusTag" class="status-pill-sm">Sẵn sàng</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="selectWorkflow">Chọn quy trình</label>
+          <select id="selectWorkflow" class="form-control">
+            <option value="DAILY_PROCUREMENT">Toàn trình Daily Procurement (POS + SAP)</option>
+            <option value="DOWNLOAD_INVENTORY">Tồn kho POS Onhand (12 Kho)</option>
+            <option value="DOWNLOAD_SALES">Doanh số POS Transaction Detail</option>
+            <option value="SAP_AUTOMATION">SAP B1 SLD &amp; Pricelist Non-Asset</option>
+            <option value="POS_LOGIN_CHECK">Kiểm tra đăng nhập &amp; Outlet POS</option>
+            <option value="SAP_LOGIN_CHECK">Kiểm tra đăng nhập SAP B1</option>
+            <option value="CONNECTION_TEST">Kiểm tra kết nối POS &amp; SAP</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="selectDateRule">Khoảng ngày</label>
+            <select id="selectDateRule" class="form-control">
+              <option value="TODAY">Hôm nay (Mặc định)</option>
+              <option value="YESTERDAY">Hôm qua</option>
+              <option value="PREVIOUS_WEEK">Tuần trước (Thứ Hai - Chủ nhật)</option>
+              <option value="CUSTOM">Tùy chọn (Từ - Đến)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="inputOutlet">Điểm bán (Outlet)</label>
+            <input type="text" id="inputOutlet" class="form-control" value="FM04" placeholder="VD: FM04">
+          </div>
+        </div>
+
+        <div id="customDateRow" class="form-row hidden">
+          <div class="form-group">
+            <label class="form-label" for="inputFromDate">Từ ngày</label>
+            <input type="date" id="inputFromDate" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="inputToDate">Đến ngày</label>
+            <input type="date" id="inputToDate" class="form-control">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="sloc-header">
+            <div class="sloc-title-group">
+              <label class="form-label" style="margin-bottom: 0;">Kho SLOC (POS)</label>
+              <span id="slocCountBadge" class="count-badge">12/12 kho</span>
+            </div>
+            <button type="button" id="btnToggleSlocs" class="link-btn">Bỏ chọn tất cả</button>
+          </div>
+          <div class="sloc-grid" id="slocContainer"></div>
+          <div class="sloc-add-row">
+            <input
+              type="text"
+              id="inputNewSloc"
+              class="form-control sloc-add-input"
+              placeholder="Thêm mã kho (VD: SFM1101 hoặc SFM1101, SFM1201)"
+            >
+            <button type="button" id="btnAddSloc" class="btn btn-secondary sloc-add-btn">+ Thêm kho</button>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button id="btnExecuteWorkflow" class="btn btn-primary" style="flex: 2;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <polygon points="6 4 20 12 6 20 6 4"></polygon>
+            </svg>
+            <span>Bắt đầu thực thi</span>
+          </button>
+          <button id="btnStopWorkflow" class="btn btn-danger" style="flex: 1;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="5" y="5" width="14" height="14" rx="2"></rect>
+            </svg>
+            <span>Dừng</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Execution Stepper Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Tiến trình thực thi</span>
+          <span id="stepperPercent" class="percent-label">0%</span>
+        </div>
+
+        <div id="stepperMessage" class="stepper-message">Chờ lệnh thực thi...</div>
+
+        <div class="stepper-container" id="stepperList">
+          <div class="stepper-step" id="step-1">
+            <div class="step-icon">1</div>
+            <div class="step-label">Đăng nhập tài khoản &amp; Chọn Outlet</div>
+          </div>
+          <div class="stepper-step" id="step-2">
+            <div class="step-icon">2</div>
+            <div class="step-label">Điều hướng Module Báo cáo POS / SAP</div>
+          </div>
+          <div class="stepper-step" id="step-3">
+            <div class="step-icon">3</div>
+            <div class="step-label">Thiết lập điều kiện lọc (Kho, Ngày, Query)</div>
+          </div>
+          <div class="stepper-step" id="step-4">
+            <div class="step-icon">4</div>
+            <div class="step-label">Khai thác &amp; Xuất bảng tính Excel</div>
+          </div>
+          <div class="stepper-step" id="step-5">
+            <div class="step-icon">5</div>
+            <div class="step-label">Kiểm tra định dạng &amp; Lưu trữ an toàn</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: DOWNLOADS HISTORY -->
+    <section id="tab-history" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Lịch sử tệp đã xuất</span>
+          <div style="display: flex; gap: 6px;">
+            <button id="btnOpenDownloadsFolder" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span>Thư mục</span>
+            </button>
+            <button id="btnRefreshHistory" class="btn btn-secondary btn-sm">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Làm mới</span>
+            </button>
+          </div>
+        </div>
+        <div id="downloadsContent">
+          <!-- Table or polished empty state injected by sidepanel.ts -->
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: LIVE CONSOLE -->
+    <section id="tab-logs" class="tab-pane">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Nhật ký hoạt động (Console)</span>
+          <div style="display: flex; gap: 6px;">
+            <button id="btnClearLogs" class="btn btn-secondary btn-sm">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+              </svg>
+              <span>Xóa</span>
+            </button>
+            <button id="btnCopyLogs" class="btn btn-secondary btn-sm">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span>Sao chép</span>
+            </button>
+          </div>
+        </div>
+        <div id="logTerminal" class="log-terminal"></div>
+      </div>
+    </section>
+
+    <!-- TAB 4: SETTINGS -->
+    <section id="tab-settings" class="tab-pane">
+      <!-- POS Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Cấu hình POS RPFO</span>
+          <span class="badge-muted">Lưu cục bộ</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgPosUrl">Địa chỉ POS RPFO</label>
+          <input type="text" id="cfgPosUrl" class="form-control" placeholder="http://172.16.1.200">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="cfgPosUsername">Tài khoản POS</label>
+            <input type="text" id="cfgPosUsername" class="form-control" placeholder="TM01">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPosPassword">Mật khẩu POS</label>
+            <div class="input-with-eye">
+              <input type="password" id="cfgPosPassword" class="form-control" placeholder="Nhập mật khẩu POS">
+              <button type="button" class="eye-btn" data-target="cfgPosPassword" title="Hiện / Ẩn mật khẩu" aria-label="Hiện hoặc ẩn mật khẩu POS">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="cfgPosPreferredOutlet">Outlet ưu tiên</label>
+            <input type="text" id="cfgPosPreferredOutlet" class="form-control" placeholder="FM04">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgPosItemFilter">Lọc mã hàng (tùy chọn)</label>
+            <input type="text" id="cfgPosItemFilter" class="form-control" placeholder="Để trống = tất cả">
+          </div>
+        </div>
+      </div>
+
+      <!-- SAP Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Cấu hình SAP Business One</span>
+          <span class="badge-muted">SLD Logon</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgSapUrl">Địa chỉ SAP Business One</label>
+          <input type="text" id="cfgSapUrl" class="form-control" placeholder="https://172.16.1.210:8100">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" for="cfgSapUsername">Tài khoản SAP</label>
+            <input type="text" id="cfgSapUsername" class="form-control" placeholder="LOG32">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfgSapPassword">Mật khẩu SAP</label>
+            <div class="input-with-eye">
+              <input type="password" id="cfgSapPassword" class="form-control" placeholder="Nhập mật khẩu SAP">
+              <button type="button" class="eye-btn" data-target="cfgSapPassword" title="Hiện / Ẩn mật khẩu" aria-label="Hiện hoặc ẩn mật khẩu SAP">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgSapCompany">Công ty SAP SLD</label>
+          <input type="text" id="cfgSapCompany" class="form-control" placeholder="Công ty TNHH Thương Mại LARIA (FM_PRO)">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgSapTargetModule">Module mục tiêu</label>
+          <input type="text" id="cfgSapTargetModule" class="form-control" placeholder="Price Lists">
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="cfgAutoTakeOverSession" checked>
+          <span>Tự động tiếp quản phiên SAP nếu trùng phiên</span>
+        </label>
+      </div>
+
+      <!-- Sticky Settings Footer -->
+      <div class="settings-sticky-bar">
+        <div id="configSavedNotice" class="config-notice hidden"></div>
+        <div class="action-row">
+          <button id="btnSaveConfig" class="btn btn-primary" style="flex: 2;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            <span>Lưu cấu hình</span>
+          </button>
+          <button id="btnTestConfig" class="btn btn-secondary" style="flex: 1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+            </svg>
+            <span>Kiểm tra kết nối</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

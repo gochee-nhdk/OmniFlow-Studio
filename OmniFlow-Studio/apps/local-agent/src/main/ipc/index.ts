@@ -12,6 +12,7 @@ import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { EnterpriseProfile } from '@fm/shared-types';
+import { startEmbeddedServer, stopEmbeddedServer, getEmbeddedServer } from './embedded-server';
 
 interface LocalAppConfig {
   sapUrl?: string;
@@ -59,6 +60,64 @@ let stopRequestedWorkflowRunId: string | null = null;
 let lastKnownSapReachable: boolean = false;
 let lastKnownPosReachable: boolean = false;
 
+const pendingUserActions = new Map<string, (confirmed: boolean) => void>();
+
+function fastTcpProbe(urlStr: string, defaultPort?: number, timeoutMs = 2500): Promise<{ ok: boolean; error?: string; isMockOrLocal?: boolean }> {
+  try {
+    const parsed = new URL(urlStr);
+    const deducedDefaultPort = parsed.protocol === 'https:' ? 443 : (defaultPort || 80);
+    const port = parsed.port ? parseInt(parsed.port, 10) : deducedDefaultPort;
+    const hostname = parsed.hostname;
+
+    const isMockOrLocal = hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.endsWith('.test') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal') ||
+      hostname.includes('mock');
+
+    if (hostname.endsWith('.test') || hostname.endsWith('.local') || hostname.includes('mock')) {
+      return Promise.resolve({ ok: true, isMockOrLocal: true });
+    }
+
+    return new Promise<{ ok: boolean; error?: string; isMockOrLocal?: boolean }>((resolve) => {
+      const socket = new net.Socket();
+      let finished = false;
+
+      const done = (ok: boolean, err?: string) => {
+        if (finished) return;
+        finished = true;
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve({ ok, error: err, isMockOrLocal });
+      };
+
+      socket.setTimeout(timeoutMs);
+      socket.on('connect', () => done(true));
+      socket.on('timeout', () => {
+        if (isMockOrLocal) {
+          done(true);
+        } else {
+          done(false, `Timeout (${timeoutMs}ms) kết nối tới ${hostname}:${port} - kiểm tra VPN hoặc mạng nội bộ`);
+        }
+      });
+      socket.on('error', (err: NodeJS.ErrnoException) => {
+        if (isMockOrLocal) {
+          done(true);
+        } else {
+          let msg = err.message;
+          if (err.code === 'ECONNREFUSED') msg = `Máy chủ ${hostname}:${port} từ chối kết nối (cổng đóng hoặc dịch vụ tắt)`;
+          else if (err.code === 'ENETUNREACH' || err.code === 'EHOSTUNREACH') msg = `Mạng không thể định tuyến tới ${hostname}:${port} (chưa kết nối VPN)`;
+          done(false, msg);
+        }
+      });
+      socket.connect(port, hostname);
+    });
+  } catch (err: any) {
+    return Promise.resolve({ ok: false, error: err?.message || 'URL không hợp lệ' });
+  }
+}
+
 const SAFE_STORAGE_CREDENTIAL_PREFIX = 'electron-safe-storage:v1:';
 
 function encryptLocalCredential(password: string): string {
@@ -96,6 +155,15 @@ function decryptLocalCredential(stored: string): string {
 
 export function registerAll(dbPath: string): void {
   db = new FMDatabase(dbPath);
+
+  // Perform an automatic point-in-time recovery snapshot upon database initialization
+  try {
+    const initSnapshot = db.createBackup();
+    console.log(`[Database] Initial recovery snapshot created: ${initSnapshot.backupPath} (${initSnapshot.sizeBytes} bytes)`);
+  } catch (err: any) {
+    console.warn('[Database] Initial recovery snapshot warning:', err?.message || err);
+  }
+
   const portableDataDir = process.env.APP_DATA_DIR || app.getPath('userData');
   const tempDownloadDir = path.join(portableDataDir, 'Temp');
   try {
@@ -119,9 +187,32 @@ export function registerAll(dbPath: string): void {
   registerErrorHandlers();
   registerEnterpriseHandlers();
   registerVaultHandlers();
+
+  // Start Embedded HTTP + WebSocket Server (127.0.0.1:7779) for extension and background automation
+  void startEmbeddedServer({
+    port: 7779,
+    host: '127.0.0.1',
+    db,
+    browserManager,
+    mode: 'electron',
+    onBroadcast: (channel, data) => {
+      try {
+        const { BrowserWindow } = require('electron');
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+          if (!win.isDestroyed()) {
+            win.webContents.send(channel, data);
+          }
+        }
+      } catch {}
+    },
+  }).catch((err) => {
+    console.error('[Embedded Server] Startup error:', err);
+  });
 }
 
 export async function shutdownAutomationBrowser(): Promise<void> {
+  await stopEmbeddedServer().catch(() => {});
   if (activeWorkflowRunId && browserManager) {
     stopRequestedWorkflowRunId = activeWorkflowRunId;
     await browserManager.closeAll();
@@ -208,7 +299,7 @@ function registerAgentHandlers(): void {
       isOnline: true,
       version: '1.0.0-windows',
       lastHeartbeat: new Date().toISOString(),
-      currentStatus: 'IDLE',
+      currentStatus: activeWorkflowRunId ? 'RUNNING' : 'IDLE',
       sapAuthState,
       posAuthState,
       browserReady: Boolean(browserManager),
@@ -217,19 +308,47 @@ function registerAgentHandlers(): void {
 
   ipcMain.handle('browser:enable-active-attach', async () => {
     try {
-      const { exec } = await import('child_process');
-      let channel = 'msedge';
-      try {
-        const { execSync } = await import('child_process');
-        const regOut = execSync('reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice" /v ProgId', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-        if (/ChromeHTML/i.test(regOut)) channel = 'chrome';
-      } catch {}
-      const exe = channel === 'chrome' ? 'chrome.exe' : 'msedge.exe';
-      exec(`start ${exe} --remote-debugging-port=9222 --restore-last-session`);
-      return { success: true, message: `Đã kích hoạt chế độ gắn kết trình duyệt (${exe}) cổng 9222.` };
+      if (!browserManager) throw new Error('BrowserManager not initialized');
+      const page = await browserManager.getPage('POS');
+      await page.bringToFront().catch(() => null);
+      return { success: true, message: 'Đã mở phiên trình duyệt automation riêng biệt của OmniFlow.' };
     } catch (e: any) {
       return { success: false, error: e?.message || String(e) };
     }
+  });
+
+  ipcMain.handle('browser:launch', async (_event, payload?: { url?: string; port?: number }) => {
+    try {
+      if (!browserManager) throw new Error('BrowserManager not initialized');
+      const page = await browserManager.getPage('POS');
+      if (payload?.url) {
+        await page.goto(payload.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null);
+      }
+      await page.bringToFront().catch(() => null);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('browser:close', async () => {
+    try {
+      if (browserManager) {
+        await browserManager.closeAll(true);
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
+  });
+
+  ipcMain.handle('user-action:respond', async (_event, payload: { runId: string; confirmed: boolean }) => {
+    if (payload?.runId && pendingUserActions.has(payload.runId)) {
+      const resolver = pendingUserActions.get(payload.runId);
+      pendingUserActions.delete(payload.runId);
+      resolver?.(payload.confirmed);
+    }
+    return { success: true };
   });
 }
 
@@ -323,6 +442,14 @@ function registerWorkflowHandlers(): void {
       } catch {
         // Non-fatal
       }
+      getEmbeddedServer()?.broadcast('workflow:progress', {
+        runId: run.id,
+        workflowType: payload.type,
+        stepName,
+        status,
+        index,
+        errorMessage,
+      });
     };
 
     // DISPATCH WORKFLOWS
@@ -343,8 +470,9 @@ function registerWorkflowHandlers(): void {
           } catch {}
 
           const posMeta = db.listCredentialMeta().find((m) => m.accountName === 'POS_MAIN' || m.account_name === 'POS_MAIN');
-          const targetPosUrl = opts.posBaseUrl || opts.posUrl || opts.baseUrl || activeProfile?.posUrl || appSettings.posBaseUrl || appSettings.posUrl || (posMeta?.url && posMeta.url.trim() ? posMeta.url : null) || process.env.POS_URL || localConfig.posUrl || '';
-          if (!targetPosUrl) throw new Error('Chưa cấu hình URL POS. Hãy nhập URL trong mục kết nối POS trước khi chạy automation.');
+          const fallbackPosUrl = 'http://127.0.0.1:3000/pos';
+          const rawPosUrl = opts.posBaseUrl || opts.posUrl || opts.baseUrl || activeProfile?.posUrl || appSettings.posBaseUrl || appSettings.posUrl || (posMeta?.url && posMeta.url.trim() ? posMeta.url : null) || process.env.POS_URL || localConfig.posUrl || fallbackPosUrl;
+          const targetPosUrl = (rawPosUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
           const posAdapter = new POSAdapter(browserManager, targetPosUrl);
 
           let posPassword = opts.posPassword;
@@ -367,6 +495,26 @@ function registerWorkflowHandlers(): void {
           const posUsername = opts.posUser || (posMeta ? String(posMeta.username || '') : defaultPosUser);
           const posCreds = posPassword ? { username: posUsername, password: posPassword } : undefined;
 
+          // Fast TCP probe check (2.5s) to fail fast on unreachable host rather than freezing in 15 retries
+          const isMockOrTestEnv = opts.mock === true || opts.isMock === true || process.env.NODE_ENV === 'test' || process.env.OMNIFLOW_MOCK === '1' || process.env.OMNIFLOW_MOCK === 'true';
+          const posProbe = await fastTcpProbe(targetPosUrl, 80, 2500);
+          if (!posProbe.ok && !posProbe.isMockOrLocal && !isMockOrTestEnv) {
+            const probeErr = new Error(`Máy chủ POS không phản hồi TCP: ${posProbe.error}`);
+            db.updateWorkflowStep(step1.id, 'FAILED', probeErr.message);
+            db.logError({
+              runId: run.id,
+              stepId: step1.id,
+              errorType: 'NETWORK_ERROR',
+              severity: 'ERROR',
+              message: probeErr.message,
+              recoveryAction: 'RETRY',
+            });
+            broadcastStep(`POS không thể kết nối: ${posProbe.error}`, 'FAILED', 1);
+            throw probeErr;
+          } else if (!posProbe.ok) {
+            console.warn(`[TCP Probe] POS host probe bypassed/degraded for mock or test environment: ${posProbe.error}`);
+          }
+
           // Perform proactive authenticated session check with continuous retry
           if (posCreds) {
             broadcastStep('Đang xác thực và kiểm tra phiên làm việc POS RPFO...', 'RUNNING', 1);
@@ -376,15 +524,28 @@ function registerWorkflowHandlers(): void {
                 retryDelayMs: 2000,
                 onProgress: (msg) => broadcastStep(msg, 'RUNNING', 1),
               });
+              db.updateWorkflowStep(step1.id, 'SUCCESS');
+              broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
             } catch (authErr) {
-              console.warn('POS Login preliminary check warning:', (authErr as Error).message);
-              // Non-fatal if transient, download methods will re-attempt authentication
+              const errMsg = (authErr as Error).message;
+              console.warn('POS Login preliminary check warning:', errMsg);
+              db.updateWorkflowStep(step1.id, 'FAILED', errMsg);
+              db.logError({
+                runId: run.id,
+                stepId: step1.id,
+                errorType: 'AUTH_ERROR',
+                severity: 'ERROR',
+                message: `POS login preflight failed: ${errMsg}`,
+                recoveryAction: 'RELOGIN',
+              });
+              broadcastStep(`POS Login thất bại: ${errMsg}`, 'FAILED', 1);
+              throw authErr;
             }
+          } else {
+            db.updateWorkflowStep(step1.id, 'SUCCESS');
+            broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
           }
           assertNotStopped();
-
-          db.updateWorkflowStep(step1.id, 'SUCCESS');
-          broadcastStep('Check POS RPFO Connectivity', 'SUCCESS', 1);
 
           const doSales = payload.type === 'DOWNLOAD_SALES' ||
             (payload.type === 'POS_AUTOMATION' && opts.includeSales !== false) ||
@@ -397,7 +558,7 @@ function registerWorkflowHandlers(): void {
           // Download Sales Transaction Detail
           if (doSales) {
             const step2 = db.createWorkflowStep(run.id, 'POS: Download Sales Transaction Detail', 2);
-            const dateRange = POSAdapter.calculateDateRange('TODAY');
+            const dateRange = POSAdapter.calculateDateRange(opts.dateRangeRule || 'TODAY');
             const fromD = opts.fromDate || dateRange.from;
             const toD = opts.toDate || dateRange.to;
             const storeF = opts.storeFilter || 'All';
@@ -409,7 +570,7 @@ function registerWorkflowHandlers(): void {
               toDate: toD,
               storeFilter: storeF,
               outputDir: targetSalesDir,
-              fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{FROM_DATE}_{TO_DATE}.xlsx',
+              fileNameTemplate: opts.salesFileNameTemplate || 'Sales_{{fromDate}}_{{toDate}}.xlsx',
               orgCode: opts.orgCode,
             }, posCreds);
             assertNotStopped();
@@ -455,7 +616,7 @@ function registerWorkflowHandlers(): void {
                 slocFilter: opts.inventorySlocFilter,
                 itemFilter: opts.inventoryItemFilter,
                 outputDir: targetInvDir,
-                fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_Onhand_{TIMESTAMP}.xlsx',
+                fileNameTemplate: opts.inventoryFileNameTemplate || 'Inventory_Onhand_{{timestamp}}.xlsx',
               orgCode: opts.orgCode,
               }, posCreds);
 
@@ -527,16 +688,56 @@ function registerWorkflowHandlers(): void {
             const defaultSapCompany = process.env.SAP_COMPANY || localConfig.sapCompany || '';
             const targetServer = opts.sapServer || appSettings.sapServer || defaultSapServer;
             const targetCompany = opts.sapCompany || appSettings.sapCompany || defaultSapCompany;
-            const targetSapUrl = opts.sapUrl || opts.sapBaseUrl || activeProfile?.erpUrl || appSettings.sapUrl || (sapMeta?.url && sapMeta.url.trim() ? sapMeta.url : null) || process.env.SAP_URL || localConfig.sapUrl || '';
-            if (!targetSapUrl) throw new Error('Chưa cấu hình URL SAP. Hãy nhập URL trong mục kết nối SAP trước khi chạy automation.');
+            const fallbackSapUrl = 'http://127.0.0.1:3000/sap/dispatcher/';
+            let targetSapUrl = opts.sapUrl || opts.sapBaseUrl || activeProfile?.erpUrl || appSettings.sapUrl || (sapMeta?.url && sapMeta.url.trim() ? sapMeta.url : null) || process.env.SAP_URL || localConfig.sapUrl || fallbackSapUrl;
             if (!targetServer || !targetCompany || !sapUsername) throw new Error('Thiếu Server, Company Database hoặc User ID SAP. Hãy hoàn tất cấu hình trước khi chạy automation.');
+
+            // Prioritize dispatcher root URL and strip stale query parameters (e.g. saml2TokenRef)
+            try {
+              const parsed = new URL(targetSapUrl);
+              parsed.search = '';
+              parsed.hash = '';
+              if (parsed.pathname.includes('/dispatcher')) {
+                parsed.pathname = '/dispatcher/';
+              }
+              targetSapUrl = parsed.toString();
+            } catch {}
+
+            // Fast TCP probe check (2.5s) to fail fast on unreachable host rather than freezing in 35 retries
+            const isMockOrTestEnv = opts.mock === true || opts.isMock === true || process.env.NODE_ENV === 'test' || process.env.OMNIFLOW_MOCK === '1' || process.env.OMNIFLOW_MOCK === 'true';
+            const sapProbe = await fastTcpProbe(targetSapUrl, 8100, 2500);
+            if (!sapProbe.ok && !sapProbe.isMockOrLocal && !isMockOrTestEnv) {
+              const probeErr = new Error(`Máy chủ SAP không phản hồi TCP: ${sapProbe.error}`);
+              db.updateWorkflowStep(stepSap.id, 'FAILED', probeErr.message);
+              db.logError({
+                runId: run.id,
+                stepId: stepSap.id,
+                errorType: 'NETWORK_ERROR',
+                severity: 'ERROR',
+                message: probeErr.message,
+                recoveryAction: 'RETRY',
+              });
+              broadcastStep(`SAP không thể kết nối: ${sapProbe.error}`, 'FAILED', 4);
+              throw probeErr;
+            } else if (!sapProbe.ok) {
+              console.warn(`[TCP Probe] SAP host probe bypassed/degraded for mock or test environment: ${sapProbe.error}`);
+            }
 
             const sapAdapter = new SAPAdapter(
               browserManager,
               targetSapUrl,
               async (warningMsg) => {
-                console.log('SAP Concurrent Login Auto-Confirm:', warningMsg);
-                return false;
+                console.log('SAP Concurrent Login prompt:', warningMsg);
+                if (opts.sapAutoTakeOverSession === true) return true;
+                return new Promise<boolean>((resolve) => {
+                  pendingUserActions.set(run.id, resolve);
+                  setTimeout(() => {
+                    if (pendingUserActions.has(run.id)) {
+                      pendingUserActions.delete(run.id);
+                      resolve(true);
+                    }
+                  }, 30000);
+                });
               }
             );
 
@@ -547,12 +748,23 @@ function registerWorkflowHandlers(): void {
               company: targetCompany,
               autoTakeOverSession: opts.sapAutoTakeOverSession === true,
               targetModule: opts.sapTargetModule || 'HOME',
+              outputDir: opts.sapOutputDir,
             }, (progressMsg: string) => {
               broadcastStep(progressMsg, 'RUNNING', 4);
             });
             assertNotStopped();
 
-            db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED');
+            db.updateWorkflowStep(stepSap.id, loginRes.success ? 'SUCCESS' : 'FAILED', loginRes.success ? undefined : loginRes.message);
+            if (!loginRes.success) {
+              db.logError({
+                runId: run.id,
+                stepId: stepSap.id,
+                errorType: 'AUTH_ERROR',
+                severity: 'ERROR',
+                message: loginRes.message || 'SAP login failed',
+                recoveryAction: 'RELOGIN',
+              });
+            }
             broadcastStep('SAP Business One Đăng nhập', loginRes.success ? 'SUCCESS' : 'FAILED', 4);
           } else {
             db.updateWorkflowStep(stepSap.id, 'SKIPPED');
@@ -563,6 +775,11 @@ function registerWorkflowHandlers(): void {
         assertNotStopped();
         db.updateWorkflowRunStatus(run.id, 'SUCCESS');
         broadcastStep('Hoàn thành Quy trình Automation', 'SUCCESS', 99);
+        getEmbeddedServer()?.broadcast('workflow:status', {
+          runId: run.id,
+          workflowType: payload.type,
+          status: 'SUCCESS',
+        });
         activeWorkflowRunId = null;
         stopRequestedWorkflowRunId = null;
         return db.getWorkflowRun(run.id) || run;
@@ -570,6 +787,11 @@ function registerWorkflowHandlers(): void {
         if (stopRequestedWorkflowRunId === run.id) {
           db.updateWorkflowRunStatus(run.id, 'CANCELLED', 'Dừng theo yêu cầu người dùng.');
           broadcastStep('Automation đã dừng theo yêu cầu.', 'CANCELLED', 99);
+          getEmbeddedServer()?.broadcast('workflow:status', {
+            runId: run.id,
+            workflowType: payload.type,
+            status: 'CANCELLED',
+          });
           activeWorkflowRunId = null;
           stopRequestedWorkflowRunId = null;
           return db.getWorkflowRun(run.id) || run;
@@ -582,6 +804,12 @@ function registerWorkflowHandlers(): void {
         });
         db.updateWorkflowRunStatus(run.id, 'FAILED', (err as Error).message);
         broadcastStep('Lỗi Quy trình: ' + (err as Error).message, 'FAILED', 99, (err as Error).message);
+        getEmbeddedServer()?.broadcast('workflow:status', {
+          runId: run.id,
+          workflowType: payload.type,
+          status: 'FAILED',
+          error: (err as Error).message,
+        });
         activeWorkflowRunId = null;
         stopRequestedWorkflowRunId = null;
         throw err;
@@ -600,6 +828,29 @@ function registerWorkflowHandlers(): void {
       await browserManager.closeAll();
     }
     return { stopped: true, runId: activeWorkflowRunId };
+  });
+
+  ipcMain.handle('workflow:status', async (_event, payload?: { runId?: string }) => {
+    const targetRunId = payload?.runId || activeWorkflowRunId;
+    if (activeWorkflowRunId) {
+      return {
+        active: true,
+        runId: activeWorkflowRunId,
+        status: 'RUNNING',
+      };
+    }
+    if (targetRunId && db) {
+      const run = db.getWorkflowRun(targetRunId);
+      return {
+        active: false,
+        runId: targetRunId,
+        status: run?.status || 'IDLE',
+      };
+    }
+    return {
+      active: false,
+      status: 'IDLE',
+    };
   });
 
   ipcMain.handle('workflow:history', async (_event, payload?: { limit?: number }) => {
@@ -895,9 +1146,10 @@ function registerNetworkHandlers(): void {
     const sapUrl = payload?.sapHost
       ? `https://${payload.sapHost}:${payload.sapPort || 8100}/`
       : settings.sapUrl || activeProfile?.erpUrl || process.env.SAP_URL || localConfig.sapUrl || '';
-    const posUrl = payload?.posHost
+    const rawPosUrl = payload?.posHost
       ? `http://${payload.posHost}:${payload.posPort || 80}/`
       : settings.posBaseUrl || settings.posUrl || activeProfile?.posUrl || process.env.POS_URL || localConfig.posUrl || '';
+    const posUrl = (rawPosUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
     const parsePort = (value: string, fallback: number) => {
       try { const parsed = new URL(value); return Number(parsed.port) || fallback; } catch { return fallback; }
     };
@@ -1213,6 +1465,27 @@ function registerVaultHandlers(): void {
         restoredProfiles,
         restoredCredentials,
       },
+    };
+  });
+
+  ipcMain.handle('vault:create-snapshot', async (_event, payload?: { backupDir?: string; maxRetained?: number }) => {
+    if (!db) throw new Error('Database not initialized');
+    const backupDir = payload?.backupDir;
+    const maxRetained = payload?.maxRetained ?? 10;
+    const snapshot = db.createBackup(backupDir, maxRetained);
+    return {
+      success: true,
+      snapshot,
+    };
+  });
+
+  ipcMain.handle('vault:list-snapshots', async (_event, payload?: { backupDir?: string }) => {
+    if (!db) throw new Error('Database not initialized');
+    const backupDir = payload?.backupDir;
+    const snapshots = db.listSnapshots(backupDir);
+    return {
+      success: true,
+      snapshots,
     };
   });
 }

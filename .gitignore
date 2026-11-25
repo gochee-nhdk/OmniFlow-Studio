@@ -43,3 +43,10 @@ FM-AUTO-OPS/diagnose-*.mjs
 FM-AUTO-OPS/test-*.mjs
 FM-AUTO-OPS/inspect-*.mjs
 FM-AUTO-OPS/temp-*.txt
+
+# Build cache, generated reports & temporary files
+*.tsbuildinfo
+OmniFlow-Studio/reports/
+OmniFlow-Studio/tmp/
+tool auto/
+tool-auto/

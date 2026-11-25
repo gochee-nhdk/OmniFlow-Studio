@@ -1,15 +1,23 @@
 import React, { useState } from 'react';
 import {
-  Building2, Plus, Check, Edit3, Trash2, X, CheckCircle2, FolderOpen
+  Building2, Plus, Check, Edit3, Trash2, X, RefreshCw, FileText,
+  Server, Globe, Database, FolderCheck, CheckCircle2, ChevronRight, FolderOpen
 } from 'lucide-react';
 import { useEnterpriseStore } from '../store/enterpriseStore';
-import { EnterpriseProfile } from '@fm/shared-types';
+import { EnterpriseProfile, ERPType } from '@fm/shared-types';
 import { invoke } from '../lib/ipc';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
 }
+
+const ERP_OPTIONS: Array<{ value: ERPType; label: string; badgeClass: string; icon: string }> = [
+  { value: 'SAP_B1', label: 'SAP Business One', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200', icon: '🏢' },
+  { value: 'ODOO', label: 'Odoo Enterprise', badgeClass: 'bg-purple-100 text-purple-800 border-purple-200', icon: '🟣' },
+  { value: 'NETSUITE', label: 'Oracle NetSuite', badgeClass: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🟠' },
+  { value: 'CUSTOM_WEB', label: 'Custom Web POS/ERP', badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🌐' },
+];
 
 export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   const { profiles, activeProfileId, setActiveProfile, saveProfile, deleteProfile } = useEnterpriseStore();
@@ -20,7 +28,13 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
   // Form state - Foundation enterprise parameters only
   const [formName, setFormName] = useState('');
   const [formCode, setFormCode] = useState('');
-  const [formDescription, setFormDescription] = useState('');
+  const [formErpType, setFormErpType] = useState<ERPType>('SAP_B1');
+  const [formErpUrl, setFormErpUrl] = useState('');
+  const [formPosUrl, setFormPosUrl] = useState('');
+  const [formServer, setFormServer] = useState('');
+  const [formDatabase, setFormDatabase] = useState('');
+  const [formCompanyName, setFormCompanyName] = useState('');
+  const [formCompanySchema, setFormCompanySchema] = useState('');
   const [formExportPath, setFormExportPath] = useState('');
   const [defaultExportPath, setDefaultExportPath] = useState('');
 
@@ -49,8 +63,15 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setEditingId(null);
     setFormName('');
     setFormCode('');
-    setFormDescription('');
+    setFormErpType('SAP_B1');
+    setFormErpUrl('https://');
+    setFormPosUrl('https://');
+    setFormServer('');
+    setFormDatabase('');
+    setFormCompanyName('');
+    setFormCompanySchema('');
     setFormExportPath(defaultExportPath);
+    // New profiles have no POS locations until the user configures them here.
     setStoreMappings([]);
     setSlocMappings([]);
     setEditingStoreIdx(null);
@@ -62,7 +83,13 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
     setEditingId(p.id);
     setFormName(p.name);
     setFormCode(p.code);
-    setFormDescription(p.description || '');
+    setFormErpType(p.erpType);
+    setFormErpUrl(p.erpUrl);
+    setFormPosUrl(p.posUrl || '');
+    setFormServer(p.server || '');
+    setFormDatabase(p.database || '');
+    setFormCompanyName(p.companyName);
+    setFormCompanySchema(p.companySchema);
     setFormExportPath(p.exportPath || defaultExportPath);
     setStoreMappings(p.storeMappings ? [...p.storeMappings] : []);
     setSlocMappings(p.slocMappings ? [...p.slocMappings] : []);
@@ -86,25 +113,22 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim() || !formCode.trim()) return;
-
-    const existingProfile = editingId ? profiles.find(p => p.id === editingId) : undefined;
+    if (!formName || !formCode || !formCompanyName || !formCompanySchema) return;
 
     await saveProfile({
       id: editingId || undefined,
       name: formName.trim(),
       code: formCode.trim().toUpperCase(),
-      description: formDescription.trim() || undefined,
+      erpType: formErpType,
+      erpUrl: formErpUrl.trim(),
+      posUrl: formPosUrl.trim() || undefined,
+      server: formServer.trim() || undefined,
+      database: formDatabase.trim() || undefined,
+      companyName: formCompanyName.trim(),
+      companySchema: formCompanySchema.trim(),
       exportPath: formExportPath.trim(),
       storeMappings,
       slocMappings,
-      erpType: existingProfile?.erpType || 'SAP_B1',
-      erpUrl: existingProfile?.erpUrl || '',
-      posUrl: existingProfile?.posUrl,
-      server: existingProfile?.server,
-      database: existingProfile?.database,
-      companyName: existingProfile?.companyName || formName.trim(),
-      companySchema: existingProfile?.companySchema || formCode.trim().toUpperCase(),
     });
 
     setIsEditing(false);
@@ -158,7 +182,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
             <div>
               <h2 className="text-lg font-bold text-slate-900">Quản lý Đa Doanh Nghiệp (Enterprise Profiles)</h2>
               <p className="text-xs text-slate-500">
-                Cấu hình thông tin hồ sơ doanh nghiệp, thư mục báo cáo và danh mục kho hàng &amp; cửa hàng
+                Cấu hình hồ sơ nền tảng doanh nghiệp, kết nối ERP/POS, danh mục kho hàng và cửa hàng
               </p>
             </div>
           </div>
@@ -191,6 +215,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
               <div className="grid grid-cols-1 gap-3">
                 {profiles.map((p) => {
                   const isActive = p.id === activeProfileId;
+                  const erpBadge = ERP_OPTIONS.find((e) => e.value === p.erpType);
 
                   return (
                     <div
@@ -206,6 +231,9 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                           <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-900 text-white">
                             {p.code}
                           </span>
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${erpBadge?.badgeClass || 'bg-slate-100'}`}>
+                            {erpBadge?.icon} {erpBadge?.label || p.erpType}
+                          </span>
                           {isActive && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3 text-emerald-600" />
@@ -216,15 +244,11 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
 
                         <h3 className="text-sm font-bold text-slate-900">{p.name}</h3>
 
-                        <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap">
-                          {p.exportPath && (
-                            <span className="flex items-center gap-1 text-slate-600 font-mono text-[11px]">
-                              <FolderOpen className="w-3.5 h-3.5 text-slate-400" />
-                              <span className="truncate max-w-[280px]">{p.exportPath}</span>
-                            </span>
-                          )}
+                        <div className="flex items-center gap-4 text-xs text-slate-500 font-mono flex-wrap">
+                          <span>Schema: <strong className="text-slate-700">{p.companySchema}</strong></span>
+                          <span>URL: <span className="text-slate-700 truncate max-w-[200px] inline-block align-bottom">{p.erpUrl}</span></span>
                           {(p.storeMappings || p.slocMappings) && (
-                            <span className="text-slate-400 font-medium">
+                            <span className="text-slate-400">
                               ({(p.storeMappings?.length || 0)} cửa hàng, {(p.slocMappings?.length || 0)} kho)
                             </span>
                           )}
@@ -288,18 +312,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                 </button>
               </div>
 
-              {/* Notice Banner */}
-              <div className="p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl flex items-start gap-2.5 text-xs text-blue-900">
-                <span className="text-base leading-none">💡</span>
-                <div>
-                  <span className="font-bold">Cấu hình kết nối phần mềm độc lập:</span>
-                  <span className="text-blue-800 ml-1">
-                    Mục này chỉ thiết lập thông tin chung của doanh nghiệp và danh mục kho/cửa hàng. Các thông số kết nối kỹ thuật riêng (URL, Server, Schema, Tài khoản đăng nhập...) được cấu hình riêng trong từng trang chức năng <strong>POS RPFO Web</strong> và <strong>SAP B1 SLD</strong> để thuận tiện và tránh trùng lặp.
-                  </span>
-                </div>
-              </div>
-
-              {/* Basic Enterprise Info */}
+              {/* Basic Enterprise Platform Info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -310,7 +323,7 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    placeholder="Nhập tên doanh nghiệp (Ví dụ: Công ty TNHH Thương mại LARIA)"
+                    placeholder="Nhập tên doanh nghiệp"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
@@ -324,8 +337,106 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                     required
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value)}
-                    placeholder="Nhập mã tổ chức (Ví dụ: FM_PRO)"
+                    placeholder="Nhập mã tổ chức"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono uppercase focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Hệ thống ERP / POS
+                  </label>
+                  <select
+                    value={formErpType}
+                    onChange={(e) => setFormErpType(e.target.value as ERPType)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    {ERP_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.icon} {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    URL kết nối SAP SLD (erpUrl) *
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={formErpUrl}
+                    onChange={(e) => setFormErpUrl(e.target.value)}
+                    placeholder="https://sap-sld.domain.com:8443"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    URL kết nối POS RPFO (posUrl)
+                  </label>
+                  <input
+                    type="url"
+                    value={formPosUrl}
+                    onChange={(e) => setFormPosUrl(e.target.value)}
+                    placeholder="https://pos-rpfo.domain.com"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Tên công ty pháp nhân trên ERP *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formCompanyName}
+                    onChange={(e) => setFormCompanyName(e.target.value)}
+                    placeholder="Tên công ty trong ERP"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Schema / Mã công ty DB (Database Schema) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formCompanySchema}
+                    onChange={(e) => setFormCompanySchema(e.target.value)}
+                    placeholder="Tên database schema"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Database Server (Tùy chọn)
+                  </label>
+                  <input
+                    type="text"
+                    value={formServer}
+                    onChange={(e) => setFormServer(e.target.value)}
+                    placeholder="Địa chỉ server SAP, nếu có"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Database Name / Catalog (Tùy chọn)
+                  </label>
+                  <input
+                    type="text"
+                    value={formDatabase}
+                    onChange={(e) => setFormDatabase(e.target.value)}
+                    placeholder="Tên database hoặc catalog"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   />
                 </div>
 
@@ -339,37 +450,24 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                       value={formExportPath}
                       onChange={(e) => setFormExportPath(e.target.value)}
                       placeholder="Thư mục lưu báo cáo của doanh nghiệp"
-                      className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-slate-50 font-mono text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      className="flex-1 px-3 py-1.5 text-xs border border-slate-300 rounded bg-slate-50 font-mono text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                     />
                     <button
                       type="button"
                       onClick={handlePickExportPath}
-                      className="px-3 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer whitespace-nowrap"
+                      className="px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded cursor-pointer whitespace-nowrap"
                     >
                       Chọn...
                     </button>
                     <button
                       type="button"
                       onClick={() => handleOpenExportFolder(formExportPath)}
-                      className="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-100 cursor-pointer"
+                      className="p-2 text-slate-500 hover:text-slate-700 border border-slate-300 rounded hover:bg-slate-100 cursor-pointer"
                       title="Mở thư mục"
                     >
                       <FolderOpen className="w-4 h-4" />
                     </button>
                   </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Ghi chú / Mô tả doanh nghiệp (Tùy chọn)
-                  </label>
-                  <input
-                    type="text"
-                    value={formDescription}
-                    onChange={(e) => setFormDescription(e.target.value)}
-                    placeholder="Mô tả hoặc ghi chú nội bộ về doanh nghiệp"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  />
                 </div>
               </div>
 
@@ -385,11 +483,42 @@ export default function EnterpriseProfilesModal({ isOpen, onClose }: Props) {
                           type="button"
                           onClick={() => {
                             const sampleStores = [
-                              { id: 'DC0101', name: 'Tổng kho DC' },
-                              { id: 'SFM0101', name: 'Cửa hàng SFM 01' },
-                              { id: 'SFM0201', name: 'Cửa hàng SFM 02' },
-                              { id: 'SFM0301', name: 'Cửa hàng SFM 03' },
+                              { id: 'DC01', name: 'DC01 - Nơ Trang Long' },
+                              { id: 'DC02', name: 'DC02 - Thủ Đức' },
+                              { id: 'EC02', name: 'Online GHTQ' },
+                              { id: 'FF01', name: 'FF01 - Farmers Fruits & Gifts - 31 Thảo Điền' },
+                              { id: 'FM01', name: 'FM01 - Nguyễn Thị Minh Khai' },
+                              { id: 'FM02', name: 'FM02 - Phan Xích Long' },
+                              { id: 'FM03', name: 'FM03 - Nguyễn Thị Thập' },
+                              { id: 'FM04', name: 'FM04 - Hoàng Hoa Thám' },
+                              { id: 'FM05', name: 'FM05 - Hai Bà Trưng' },
+                              { id: 'FM06QT', name: 'FM06QT - Quang Trung' },
+                              { id: 'FM07AP', name: 'FM07 - An Phú' },
+                              { id: 'FM08', name: 'FM08 - Sư Vạn Hạnh' },
+                              { id: 'FM09', name: 'FM09 - Vinhomes Grand Park S10.01' },
                             ];
+                            const sampleSlocs = [
+                              { id: 'SDC0101', name: 'Kho Trung Tâm NTL DC01' },
+                              { id: 'SDC0107', name: 'Kho Trung Tâm NTL DC01 (07)' },
+                              { id: 'SDC0201', name: 'Kho Trung Tâm Thủ Đức DC02' },
+                              { id: 'SFF0101', name: 'Kho POS Retail FF01 - Thảo Điền' },
+                              { id: 'SFM0101', name: 'Kho POS Retail FM01' },
+                              { id: 'SFM0201', name: 'Kho POS Retail FM02' },
+                              { id: 'SFM0301', name: 'Kho POS Retail FM03' },
+                              { id: 'SFM0401', name: 'Kho POS Retail FM04' },
+                              { id: 'SFM0501', name: 'Kho POS Retail FM05' },
+                              { id: 'SFM06QT1', name: 'Kho POS Retail FM06QT' },
+                              { id: 'SFM07AP1', name: 'Kho POS Retail FM07AP' },
+                              { id: 'SFM0801', name: 'Kho POS Retail FM08' },
+                              { id: 'SFM0901', name: 'Kho POS Retail FM09' },
+                              { id: 'SFM1001', name: 'Kho POS Retail FM10' },
+                              { id: 'SFM1101', name: 'Kho POS Retail FM11' },
+                              { id: 'SFM1201', name: 'Kho POS Retail FM12' },
+                            ];
+                            setSlocMappings((prev) => {
+                              const existingIds = new Set(prev.map((s) => s.id));
+                              return [...prev, ...sampleSlocs.filter((s) => !existingIds.has(s.id))];
+                            });
                             setStoreMappings((prev) => {
                               const existingIds = new Set(prev.map((s) => s.id));
                               const toAdd = sampleStores.filter((s) => !existingIds.has(s.id));

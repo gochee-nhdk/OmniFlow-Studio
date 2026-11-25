@@ -23,6 +23,7 @@ const SAP_MODULE_LABELS: Record<string, string> = {
   PURCHASING_PO: 'Đặt Hàng (PO)',
   PURCHASING_RETURN: 'Xuất Trả (Return)',
   PURCHASING_GRPO: 'Nhận Hàng (GRPO)',
+  QUERY_PRICELIST: 'Xuất Pricelist NCC (Query Manager)',
 };
 
 export default function DashboardPage() {
