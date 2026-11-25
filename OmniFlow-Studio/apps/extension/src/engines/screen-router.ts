@@ -43,6 +43,8 @@ import {
   SapScreenState,
 } from './sap-engine.js';
 import { runVlmFallback } from './browser-agent.js';
+import { cdpDetach } from './cdp-executor.js';
+import { removeCursorOverlay } from './cursor-overlay.js';
 
 export interface ScreenRouterOptions {
   geminiApiKey?: string;
@@ -83,9 +85,10 @@ async function tryVlmRecovery(params: {
   lastError?: string;
   consecutiveFailures: number;
   geminiApiKey?: string;
+  preferCdp?: boolean;
   signal?: AbortSignal;
 }): Promise<{ recovered: boolean; aborted?: boolean; message: string }> {
-  const { tabId, goal, currentState, lastError, consecutiveFailures, geminiApiKey, signal } = params;
+  const { tabId, goal, currentState, lastError, consecutiveFailures, geminiApiKey, preferCdp, signal } = params;
   assertNotAborted(signal);
 
   try {
@@ -96,6 +99,7 @@ async function tryVlmRecovery(params: {
       lastError,
       consecutiveFailures,
       apiKey: geminiApiKey,
+      preferCdp,
     });
 
     if (vlmRes.action.action === 'abort') {
@@ -235,7 +239,7 @@ export async function routePosReportDownload(
   const fromDate = cfg.fromDate || fallbackRange.fromDate;
   const toDate = cfg.toDate || fallbackRange.toDate;
   const fallbackFilename = resolveFilename(
-    cfg.fileNameTemplate || (isSales ? 'POS_Sales_{from}_{to}.xlsx' : 'POS_Inventory_{date}.xlsx'),
+    cfg.fileNameTemplate || (isSales ? 'POS_Sales_{{from}}_{{to}}.xlsx' : 'POS_Inventory_{{date}}.xlsx'),
     {
       from: fromDate,
       to: toDate,
@@ -292,8 +296,14 @@ export async function routePosReportDownload(
           lastError = err?.message || `Không thể mở ${reportName}`;
         }
       } else if (state.screen === targetScreen && !state.activeOverlayBlocking) {
-        // Goal-driven shortcut: if grid already has rows, skip Search and jump straight to Filter/Export!
-        if (state.gridRowCount > 0 && state.hasExportButton) {
+        // Goal-driven shortcut: if grid already has rows, skip Search and jump straight to Filter/Export
+        // For SALES, only skip Search when the displayed date range matches the requested fromDate/toDate.
+        const canJumpToExport =
+          state.gridRowCount > 0 &&
+          state.hasExportButton &&
+          (!isSales || (state.currentFromDate === fromDate && state.currentToDate === toDate));
+
+        if (canJumpToExport) {
           try {
             if (!isSales) {
               const slocs = parseFilterValues(cfg.slocFilter);
@@ -426,142 +436,148 @@ export async function routeSapAutomation(
   let consecutiveFailures = 0;
   let lastError: string | undefined;
 
-  for (let iter = 1; iter <= maxIterations; iter++) {
-    assertNotAborted(signal);
-    const state: SapScreenState = await readSapScreenState(tabId);
-    options.onStateTransition?.({ target: 'SAP', screen: state.screen, iteration: iter });
+  try {
+    for (let iter = 1; iter <= maxIterations; iter++) {
+      assertNotAborted(signal);
+      const state: SapScreenState = await readSapScreenState(tabId);
+      options.onStateTransition?.({ target: 'SAP', screen: state.screen, iteration: iter });
 
-    if (state.isLoading || state.screen === 'INITIALIZING') {
-      onProgress('SAP B1 đang khởi tạo/tải dữ liệu...', 30);
-      await sleepAbortable(1500, signal);
-      consecutiveFailures = 0;
-      continue;
-    }
-
-    if (state.screen === 'SAML_ERROR') {
-      onProgress('Phát hiện lỗi SAML, tải lại SAP Dispatcher...', 15);
-      const rootUrl = resolveDispatcherRootUrl(cfg.sapUrl, state.url);
-      await chrome.tabs.update(tabId, { url: rootUrl });
-      await sleepAbortable(2500, signal);
-      continue;
-    }
-
-    if (state.screen === 'SLD_LOGON') {
-      try {
-        onProgress('Đang đăng nhập SAP SLD Logon...', 20);
-        const logonRes = await fillAndSubmitLogonForm(tabId, cfg, signal);
-        if (!logonRes.ok) {
-          throw new Error(logonRes.retryReason || 'Đăng nhập SAP SLD thất bại');
-        }
-        await sleepAbortable(2000, signal);
-        consecutiveFailures = 0;
-        lastError = undefined;
-        continue;
-      } catch (err: any) {
-        consecutiveFailures++;
-        lastError = err?.message || 'Lỗi SLD Logon';
-      }
-    } else if (state.screen === 'CONCURRENT_LOGIN') {
-      try {
-        onProgress('Xử lý hộp thoại trùng phiên SAP...', 28);
-        const authRes = await checkAndHandleAuthDialog(tabId, cfg.autoTakeOverSession ?? true, signal);
-        if (authRes.status === 'concurrent_blocked' || authRes.status === 'auth_failed') {
-          return { ok: false, message: authRes.message || 'SAP từ chối đăng nhập' };
-        }
+      if (state.isLoading || state.screen === 'INITIALIZING') {
+        onProgress('SAP B1 đang khởi tạo/tải dữ liệu...', 30);
         await sleepAbortable(1500, signal);
         consecutiveFailures = 0;
-        lastError = undefined;
         continue;
-      } catch (err: any) {
-        consecutiveFailures++;
-        lastError = err?.message || 'Lỗi xử lý trùng phiên SAP';
-      }
-    } else if (state.screen === 'SYSTEM_MESSAGES_LOG') {
-      onProgress('Đóng System Messages Log...', 40);
-      await dismissSystemMessagesLog(tabId, signal);
-      await sleepAbortable(1000, signal);
-      consecutiveFailures = 0;
-      continue;
-    } else if (state.screen === 'WORKSPACE_READY') {
-      if (cfg.targetModule === 'HOME') {
-        onProgress('SAP B1 Workspace đã sẵn sàng!', 100);
-        return { ok: true, message: 'Đăng nhập SAP Business One thành công!' };
       }
 
-      if (cfg.targetModule && cfg.targetModule !== 'QUERY_PRICELIST') {
+      if (state.screen === 'SAML_ERROR') {
+        onProgress('Phát hiện lỗi SAML, tải lại SAP Dispatcher...', 15);
+        const rootUrl = resolveDispatcherRootUrl(cfg.sapUrl, state.url);
+        await chrome.tabs.update(tabId, { url: rootUrl });
+        await sleepAbortable(2500, signal);
+        continue;
+      }
+
+      if (state.screen === 'SLD_LOGON') {
         try {
-          onProgress(`Điều hướng tới module ${cfg.targetModule}...`, 65);
-          const ok = await navigateToStandardModule(tabId, cfg.targetModule, onProgress, signal);
-          if (!ok) throw new Error(`Không thể mở module ${cfg.targetModule}`);
-          onProgress(`Đã mở module ${cfg.targetModule}`, 100);
-          return { ok: true, message: `Đã mở module ${cfg.targetModule}` };
-        } catch (err: any) {
-          consecutiveFailures++;
-          lastError = err?.message || `Lỗi mở module ${cfg.targetModule}`;
-        }
-      } else {
-        try {
-          onProgress('Mở Query Manager trên SAP B1...', 55);
-          const opened = await openQueryManager(tabId, signal);
-          if (!opened) throw new Error('Không thể mở Query Manager');
-          await sleepAbortable(1200, signal);
+          onProgress('Đang đăng nhập SAP SLD Logon...', 20);
+          const logonRes = await fillAndSubmitLogonForm(tabId, cfg, signal);
+          if (!logonRes.ok) {
+            throw new Error(logonRes.retryReason || 'Đăng nhập SAP SLD thất bại');
+          }
+          await sleepAbortable(2000, signal);
           consecutiveFailures = 0;
           lastError = undefined;
           continue;
         } catch (err: any) {
           consecutiveFailures++;
-          lastError = err?.message || 'Lỗi mở Query Manager';
+          lastError = err?.message || 'Lỗi SLD Logon';
         }
-      }
-    } else if (
-      state.screen === 'QUERY_MANAGER' ||
-      state.screen === 'QUERY_RESULT' ||
-      state.screen === 'SAVE_AS_DIALOG' ||
-      state.screen === 'CURRENCY_DIALOG'
-    ) {
-      try {
-        onProgress(`Thực thi Query "${queryName}" & xuất .xlsx...`, 75);
-        const exportRes = await runQueryManagerAndExport(tabId, queryCategory, queryName, onProgress, signal);
-        if (exportRes.ok) {
-          onProgress(exportRes.message || 'Xuất Price List SAP thành công!', 100);
-          return exportRes;
+      } else if (state.screen === 'CONCURRENT_LOGIN') {
+        try {
+          onProgress('Xử lý hộp thoại trùng phiên SAP...', 28);
+          const authRes = await checkAndHandleAuthDialog(tabId, cfg.autoTakeOverSession ?? true, signal);
+          if (authRes.status === 'concurrent_blocked' || authRes.status === 'auth_failed') {
+            return { ok: false, message: authRes.message || 'SAP từ chối đăng nhập' };
+          }
+          await sleepAbortable(1500, signal);
+          consecutiveFailures = 0;
+          lastError = undefined;
+          continue;
+        } catch (err: any) {
+          consecutiveFailures++;
+          lastError = err?.message || 'Lỗi xử lý trùng phiên SAP';
         }
-        throw new Error(exportRes.message || 'Xuất Query Manager thất bại');
-      } catch (err: any) {
-        consecutiveFailures++;
-        lastError = err?.message || 'Lỗi trong Query Manager / Export';
-      }
-    }
-
-    // VLM fallback on UNKNOWN or >= 2 consecutive failures
-    if (state.screen === 'UNKNOWN' || consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
-      onProgress(`Gọi VLM Fallback xử lý màn hình SAP (${state.screen})...`, 50);
-      const vlm = await tryVlmRecovery({
-        tabId,
-        goal: `Navigate SAP B1 to ${cfg.targetModule || 'QUERY_PRICELIST'} (${queryName}) and export .xlsx`,
-        currentState: state.screen,
-        lastError,
-        consecutiveFailures,
-        geminiApiKey: options.geminiApiKey,
-        signal,
-      });
-      if (vlm.aborted) {
-        return { ok: false, message: vlm.message };
-      }
-      if (vlm.recovered) {
+      } else if (state.screen === 'SYSTEM_MESSAGES_LOG') {
+        onProgress('Đóng System Messages Log...', 40);
+        await dismissSystemMessagesLog(tabId, signal);
+        await sleepAbortable(1000, signal);
         consecutiveFailures = 0;
-        lastError = undefined;
         continue;
+      } else if (state.screen === 'WORKSPACE_READY') {
+        if (cfg.targetModule === 'HOME') {
+          onProgress('SAP B1 Workspace đã sẵn sàng!', 100);
+          return { ok: true, message: 'Đăng nhập SAP Business One thành công!' };
+        }
+
+        if (cfg.targetModule && cfg.targetModule !== 'QUERY_PRICELIST') {
+          try {
+            onProgress(`Điều hướng tới module ${cfg.targetModule}...`, 65);
+            const ok = await navigateToStandardModule(tabId, cfg.targetModule, onProgress, signal);
+            if (!ok) throw new Error(`Không thể mở module ${cfg.targetModule}`);
+            onProgress(`Đã mở module ${cfg.targetModule}`, 100);
+            return { ok: true, message: `Đã mở module ${cfg.targetModule}` };
+          } catch (err: any) {
+            consecutiveFailures++;
+            lastError = err?.message || `Lỗi mở module ${cfg.targetModule}`;
+          }
+        } else {
+          try {
+            onProgress('Mở Query Manager trên SAP B1...', 55);
+            const opened = await openQueryManager(tabId, signal);
+            if (!opened) throw new Error('Không thể mở Query Manager');
+            await sleepAbortable(1200, signal);
+            consecutiveFailures = 0;
+            lastError = undefined;
+            continue;
+          } catch (err: any) {
+            consecutiveFailures++;
+            lastError = err?.message || 'Lỗi mở Query Manager';
+          }
+        }
+      } else if (
+        state.screen === 'QUERY_MANAGER' ||
+        state.screen === 'QUERY_RESULT' ||
+        state.screen === 'SAVE_AS_DIALOG' ||
+        state.screen === 'CURRENCY_DIALOG'
+      ) {
+        try {
+          onProgress(`Thực thi Query "${queryName}" & xuất .xlsx...`, 75);
+          const exportRes = await runQueryManagerAndExport(tabId, queryCategory, queryName, onProgress, signal);
+          if (exportRes.ok) {
+            onProgress(exportRes.message || 'Xuất Price List SAP thành công!', 100);
+            return exportRes;
+          }
+          throw new Error(exportRes.message || 'Xuất Query Manager thất bại');
+        } catch (err: any) {
+          consecutiveFailures++;
+          lastError = err?.message || 'Lỗi trong Query Manager / Export';
+        }
       }
-      consecutiveFailures++;
-      lastError = vlm.message;
+
+      // VLM fallback on UNKNOWN or >= 2 consecutive failures
+      if (state.screen === 'UNKNOWN' || consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD) {
+        onProgress(`Gọi VLM Fallback xử lý màn hình SAP (${state.screen})...`, 50);
+        const vlm = await tryVlmRecovery({
+          tabId,
+          goal: `Navigate SAP B1 to ${cfg.targetModule || 'QUERY_PRICELIST'} (${queryName}) and export .xlsx`,
+          currentState: state.screen,
+          lastError,
+          consecutiveFailures,
+          geminiApiKey: options.geminiApiKey,
+          preferCdp: true,
+          signal,
+        });
+        if (vlm.aborted) {
+          return { ok: false, message: vlm.message };
+        }
+        if (vlm.recovered) {
+          consecutiveFailures = 0;
+          lastError = undefined;
+          continue;
+        }
+        consecutiveFailures++;
+        lastError = vlm.message;
+      }
+
+      if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD + 2) {
+        return { ok: false, message: lastError || `Thất bại liên tiếp trên SAP (${state.screen})` };
+      }
+      await sleepAbortable(1500, signal);
     }
 
-    if (consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD + 2) {
-      return { ok: false, message: lastError || `Thất bại liên tiếp trên SAP (${state.screen})` };
-    }
-    await sleepAbortable(1500, signal);
+    return { ok: false, message: lastError || 'Quá số bước thực thi SAP B1' };
+  } finally {
+    await cdpDetach(tabId).catch(() => null);
+    await removeCursorOverlay(tabId).catch(() => null);
   }
-
-  return { ok: false, message: lastError || 'Quá số bước thực thi SAP B1' };
 }

@@ -1,4 +1,5 @@
 import { requestVlmNextAction, VlmNextAction } from './vlm-client.js';
+import { cdpClick, cdpPressKey } from './cdp-executor.js';
 
 export interface AgentElement {
   index: number;
@@ -31,6 +32,7 @@ export interface VlmFallbackParams {
   lastError?: string;
   consecutiveFailures?: number;
   apiKey?: string;
+  preferCdp?: boolean;
 }
 
 export interface VlmFallbackResult {
@@ -422,11 +424,103 @@ export async function captureTabScreenshot(tabId: number): Promise<string> {
 }
 
 /**
+ * Computes top-level viewport center coordinates `(x, y)` for an element,
+ * adding parent `iframe.getBoundingClientRect().left/top` offsets recursively when `frameId !== 0`.
+ */
+export async function getElementViewportCenter(
+  tabId: number,
+  element: Pick<AgentElement, 'rect' | 'frameId'>
+): Promise<{ x: number; y: number }> {
+  const localCenterX = element.rect.x + element.rect.width / 2;
+  const localCenterY = element.rect.y + element.rect.height / 2;
+  const frameId = element.frameId ?? 0;
+
+  if (frameId === 0) {
+    return { x: Math.round(localCenterX), y: Math.round(localCenterY) };
+  }
+
+  let offsetX = 0;
+  let offsetY = 0;
+
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      func: () => {
+        let x = 0;
+        let y = 0;
+        let crossOriginBlocked = false;
+        try {
+          let win: Window = window;
+          while (win !== win.top) {
+            const fe = win.frameElement as HTMLElement | null;
+            if (!fe) {
+              crossOriginBlocked = true;
+              break;
+            }
+            const r = fe.getBoundingClientRect();
+            x += r.left;
+            y += r.top;
+            win = win.parent;
+          }
+        } catch {
+          crossOriginBlocked = true;
+        }
+        return { x, y, crossOriginBlocked, href: location.href };
+      },
+    });
+
+    const data = res?.result as
+      | { x: number; y: number; crossOriginBlocked: boolean; href: string }
+      | undefined;
+
+    if (data) {
+      offsetX = data.x;
+      offsetY = data.y;
+
+      if (data.crossOriginBlocked && data.href) {
+        const allFrames = await chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          func: () => ({
+            href: location.href,
+            iframes: Array.from(document.querySelectorAll('iframe')).map((f) => {
+              const r = f.getBoundingClientRect();
+              return { src: f.src || '', left: r.left, top: r.top };
+            }),
+          }),
+        });
+
+        for (const frameRes of allFrames) {
+          if ((frameRes.frameId ?? 0) === frameId) continue;
+          const info = frameRes.result as
+            | { href: string; iframes: Array<{ src: string; left: number; top: number }> }
+            | undefined;
+          const match = info?.iframes.find(
+            (f) => f.src && (f.src === data.href || data.href.startsWith(f.src))
+          );
+          if (match) {
+            offsetX += match.left;
+            offsetY += match.top;
+            break;
+          }
+        }
+      }
+    }
+  } catch {
+    // Fall back to local coordinates if frame offset lookup fails
+  }
+
+  return {
+    x: Math.round(offsetX + localCenterX),
+    y: Math.round(offsetY + localCenterY),
+  };
+}
+
+/**
  * VLM Vision fallback helper for screen-router.ts when screen state is UNKNOWN,
  * an unexpected popup blocks the UI, or the same action fails 2 consecutive times.
  */
 export async function runVlmFallback(params: VlmFallbackParams): Promise<VlmFallbackResult> {
-  const { tabId, goal, currentState, lastError, consecutiveFailures, apiKey } = params;
+  const { tabId, goal, currentState, lastError, consecutiveFailures, apiKey, preferCdp } = params;
   const snapshot = await inspectAllFrames(tabId, { drawOverlay: true });
   let screenshotDataUrl: string;
   try {
@@ -455,12 +549,42 @@ export async function runVlmFallback(params: VlmFallbackParams): Promise<VlmFall
         outcome: { ok: false, message: `VLM chọn index [${action.elementIndex}] không tồn tại.` },
       };
     }
+
+    if (action.action === 'click' && preferCdp) {
+      try {
+        const { x, y } = await getElementViewportCenter(tabId, target);
+        await cdpClick(tabId, x, y);
+        return {
+          executed: true,
+          action,
+          snapshot,
+          outcome: { ok: true, message: `Đã CDP click [${target.index}] tại (${x}, ${y}).` },
+        };
+      } catch {
+        // Fall back to DOM actOnFrameElement if CDP click fails
+      }
+    }
+
     const outcome = await actOnFrameElement(tabId, target, action.action, action.value);
     return { executed: outcome.ok, action, snapshot, outcome };
   }
 
   if (action.action === 'press_key' && action.value) {
     const key = action.value;
+    if (preferCdp) {
+      try {
+        await cdpPressKey(tabId, key);
+        return {
+          executed: true,
+          action,
+          snapshot,
+          outcome: { ok: true, message: `Đã gửi phím CDP ${key}.` },
+        };
+      } catch {
+        // Fall back to DOM KeyboardEvent dispatch
+      }
+    }
+
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (k: string) => {

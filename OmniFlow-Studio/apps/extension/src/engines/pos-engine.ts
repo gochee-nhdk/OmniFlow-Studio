@@ -25,6 +25,8 @@ export interface PosScreenState {
   gridRowCount: number;
   hasExportButton: boolean;
   activeOverlayBlocking: boolean;
+  currentFromDate?: string;
+  currentToDate?: string;
 }
 
 export interface PosEngineConfig {
@@ -359,12 +361,63 @@ export async function readPosScreenState(tabId: number): Promise<PosScreenState>
       screen = 'DASHBOARD';
     }
 
+    let currentFromDate: string | undefined;
+    let currentToDate: string | undefined;
+    if (screen === 'SALES_DETAIL') {
+      const normalizeDateToYmd = (raw: unknown): string | undefined => {
+        if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${raw.getFullYear()}-${pad(raw.getMonth() + 1)}-${pad(raw.getDate())}`;
+        }
+        if (typeof raw !== 'string') return undefined;
+        const text = raw.trim();
+        if (!text) return undefined;
+        const ymdMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
+        if (ymdMatch) {
+          const [, y, m, d] = ymdMatch;
+          return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+        const dmyMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (dmyMatch) {
+          const [, d, m, y] = dmyMatch;
+          return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+        }
+        return undefined;
+      };
+
+      const readDateBoxYmd = (box: Element | undefined): string | undefined => {
+        if (!box) return undefined;
+        const input = box.querySelector('input.dx-texteditor-input, input') as HTMLInputElement | null;
+        const fromInput = normalizeDateToYmd(input?.value);
+        if (fromInput) return fromInput;
+        const devExpress = (window as any).DevExpress;
+        if (devExpress?.ui?.dxDateBox) {
+          try {
+            const inst = devExpress.ui.dxDateBox.getInstance(box);
+            if (inst && typeof inst.option === 'function') {
+              return normalizeDateToYmd(inst.option('value'));
+            }
+          } catch {
+            // ignore
+          }
+        }
+        return undefined;
+      };
+
+      const visibleBoxes = Array.from(document.querySelectorAll('dx-date-box, .dx-datebox')).filter(isVisible);
+      const dateBoxes = visibleBoxes.length >= 2 ? visibleBoxes : Array.from(document.querySelectorAll('dx-date-box, .dx-datebox'));
+      currentFromDate = readDateBoxYmd(dateBoxes[0]);
+      currentToDate = readDateBoxYmd(dateBoxes[1]);
+    }
+
     return {
       screen,
       isLoading,
       gridRowCount,
       hasExportButton,
       activeOverlayBlocking,
+      currentFromDate,
+      currentToDate,
     };
   });
 
@@ -375,6 +428,8 @@ export async function readPosScreenState(tabId: number): Promise<PosScreenState>
     gridRowCount: dom?.gridRowCount ?? 0,
     hasExportButton: dom?.hasExportButton ?? false,
     activeOverlayBlocking: dom?.activeOverlayBlocking ?? false,
+    currentFromDate: dom?.currentFromDate,
+    currentToDate: dom?.currentToDate,
   };
 }
 

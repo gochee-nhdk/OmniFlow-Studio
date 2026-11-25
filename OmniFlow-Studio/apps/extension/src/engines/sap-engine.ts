@@ -1315,14 +1315,29 @@ export async function openQueryManager(
         ).filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
         const match = all.reverse().find((el) => (el.textContent || '').toLowerCase().includes('query manager'));
         if (match) {
+          match.scrollIntoView({ block: 'center', inline: 'center' });
           const rect = match.getBoundingClientRect();
-          match.click();
+          let offsetX = 0;
+          let offsetY = 0;
+          let win: Window | null = window;
+          while (win && win !== win.top) {
+            try {
+              const fe = win.frameElement as HTMLElement | null;
+              if (!fe) break;
+              const fr = fe.getBoundingClientRect();
+              offsetX += fr.left;
+              offsetY += fr.top;
+              win = win.parent;
+            } catch {
+              break;
+            }
+          }
           return {
             found: true,
             occluded: false,
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2,
-            rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+            x: rect.left + offsetX + rect.width / 2,
+            y: rect.top + offsetY + rect.height / 2,
+            rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
           } satisfies TargetCoords;
         }
         return undefined;

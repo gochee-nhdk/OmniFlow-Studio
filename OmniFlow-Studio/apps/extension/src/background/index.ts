@@ -82,6 +82,11 @@ function broadcast(type: string, payload: any) {
   chrome.runtime.sendMessage({ type, payload }).catch(() => {
     // Ignore when no UI listener (popup/sidepanel) is open
   });
+  for (const tabId of activeAutomationTabIds) {
+    chrome.tabs.sendMessage(tabId, { type, payload }).catch(() => {
+      // Ignore if content script is not injected on tab
+    });
+  }
 }
 
 async function logEvent(
@@ -233,7 +238,10 @@ async function findOrOpenTab(targetUrl: string, trackForAutomation = true): Prom
     currentWindowTabs.find((t) => matchesTab(t));
 
   if (existing?.id != null) {
-    if (trackForAutomation) activeAutomationTabIds.add(existing.id);
+    if (trackForAutomation) {
+      activeAutomationTabIds.add(existing.id);
+      chrome.tabs.sendMessage(existing.id, { type: 'START_KEEPALIVE' }).catch(() => {});
+    }
     if (!existing.active) {
       await chrome.tabs.update(existing.id, { active: true });
     }
@@ -245,7 +253,10 @@ async function findOrOpenTab(targetUrl: string, trackForAutomation = true): Prom
   if (created.id == null) {
     throw new Error(`Không thể mở tab mới cho ${targetUrl}`);
   }
-  if (trackForAutomation) activeAutomationTabIds.add(created.id);
+  if (trackForAutomation) {
+    activeAutomationTabIds.add(created.id);
+    chrome.tabs.sendMessage(created.id, { type: 'START_KEEPALIVE' }).catch(() => {});
+  }
   await waitForTabComplete(created.id, 15000);
   return created.id;
 }

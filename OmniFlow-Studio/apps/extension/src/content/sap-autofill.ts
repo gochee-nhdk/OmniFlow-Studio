@@ -287,11 +287,66 @@
     chrome.runtime.sendMessage({ action: 'OPEN_SIDEPANEL' });
   });
 
-  // Live Progress Toast Listener
+  let keepAlivePort: chrome.runtime.Port | null = null;
+  let keepAliveTimer: number | null = null;
+  let isKeepAliveActive = false;
+
+  function startKeepAlivePort() {
+    isKeepAliveActive = true;
+    if (keepAlivePort) return;
+    try {
+      keepAlivePort = chrome.runtime.connect({ name: 'omniflow-keepalive' });
+      keepAlivePort.onDisconnect.addListener(() => {
+        keepAlivePort = null;
+        if (keepAliveTimer !== null) {
+          window.clearInterval(keepAliveTimer);
+          keepAliveTimer = null;
+        }
+        if (isKeepAliveActive) {
+          window.setTimeout(() => {
+            if (isKeepAliveActive) startKeepAlivePort();
+          }, 1000);
+        }
+      });
+      if (keepAliveTimer === null) {
+        keepAliveTimer = window.setInterval(() => {
+          try {
+            keepAlivePort?.postMessage({ type: 'PING', source: 'sap-content', ts: Date.now() });
+          } catch {
+            // Ignore; onDisconnect handles reconnect
+          }
+        }, 20000);
+      }
+    } catch {
+      keepAlivePort = null;
+    }
+  }
+
+  function stopKeepAlivePort() {
+    isKeepAliveActive = false;
+    if (keepAliveTimer !== null) {
+      window.clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+    if (keepAlivePort) {
+      try {
+        keepAlivePort.disconnect();
+      } catch {
+        // Ignore
+      }
+      keepAlivePort = null;
+    }
+  }
+
+  // Live Progress Toast + MV3 Keep-Alive Listener
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg?.type) return;
 
-    if (msg.type === 'WORKFLOW_PROGRESS' && msg.payload) {
+    if (msg.type === 'START_KEEPALIVE') {
+      startKeepAlivePort();
+    } else if (msg.type === 'STOP_KEEPALIVE') {
+      stopKeepAlivePort();
+    } else if (msg.type === 'WORKFLOW_PROGRESS' && msg.payload) {
       const p = msg.payload;
       const isRunning =
         p.status === 'RUNNING' ||
@@ -299,15 +354,23 @@
         p.status === 'PENDING' ||
         p.status === 'RETRYING';
       setStatusState(isRunning);
+      if (isRunning) {
+        startKeepAlivePort();
+      } else if (p.status === 'SUCCESS' || p.status === 'FAILED' || p.status === 'CANCELLED') {
+        stopKeepAlivePort();
+      }
       showToast(p.step || p.message || 'Đang xử lý SAP...', isRunning ? 0 : 4000, p.percent);
     } else if (msg.type === 'WORKFLOW_COMPLETED') {
       setStatusState(false);
+      stopKeepAlivePort();
       showToast(msg.payload?.message || 'Hoàn thành xuất Báo giá SAP!', 4000, 100);
     } else if (msg.type === 'WORKFLOW_FAILED') {
       setStatusState(false);
+      stopKeepAlivePort();
       showToast(`Lỗi SAP: ${msg.payload?.error || 'Thất bại'}`, 5000);
     } else if (msg.type === 'WORKFLOW_CANCELLED') {
       setStatusState(false);
+      stopKeepAlivePort();
       showToast('Đã dừng quy trình SAP.', 3000);
     }
   });
