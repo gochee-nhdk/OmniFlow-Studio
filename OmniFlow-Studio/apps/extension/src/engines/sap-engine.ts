@@ -12,6 +12,15 @@ import {
   removeCursorOverlay,
   type ElementRect,
 } from './cursor-overlay.js';
+import {
+  cdpAttach,
+  cdpDetach,
+  cdpClick,
+  cdpDoubleClick,
+  cdpWheel,
+  cdpType,
+  cdpPressKey,
+} from './cdp-executor.js';
 
 export type SapTargetModule =
   | 'HOME'
@@ -180,10 +189,24 @@ async function execInAllFrames<TArgs extends unknown[], TResult>(
 }
 
 /**
+ * Normalizes Vietnamese text for diacritic-insensitive matching (NFD strip + đ/Đ -> d/D).
+ */
+export function normalizeVietnameseText(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Derives the clean SAP Dispatcher base URL (e.g. https://172.16.1.210:8100/dispatcher/)
  * even if currentUrl is on /dispatcher/saml2/sp/acs or SLD :40000/ControlCenter/sbo.html.
  */
-function resolveDispatcherRootUrl(sapUrl: string, currentUrl?: string): string {
+export function resolveDispatcherRootUrl(sapUrl: string, currentUrl?: string): string {
   for (const candidate of [sapUrl, currentUrl || '']) {
     if (!candidate) continue;
     try {
@@ -251,6 +274,36 @@ async function animateTargetClick(
   await cursorAction(tabId, { type: 'click', x: coords.x, y: coords.y });
   await sleep(120, signal);
   await cursorAction(tabId, { type: 'clearHighlight' });
+}
+
+async function cdpClickWithVisual(
+  tabId: number,
+  coords: TargetCoords | undefined,
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (!coords?.found) return false;
+  await animateTargetClick(tabId, coords, signal);
+  try {
+    await cdpClick(tabId, coords.x, coords.y);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function cdpDoubleClickWithVisual(
+  tabId: number,
+  coords: TargetCoords | undefined,
+  signal?: AbortSignal
+): Promise<boolean> {
+  if (!coords?.found) return false;
+  await animateTargetClick(tabId, coords, signal);
+  try {
+    await cdpDoubleClick(tabId, coords.x, coords.y);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -431,7 +484,10 @@ export async function readSapScreenState(tabId: number): Promise<SapScreenState>
   }
 }
 
-async function dismissSystemMessagesLog(tabId: number, signal?: AbortSignal): Promise<boolean> {
+export async function dismissSystemMessagesLog(
+  tabId: number,
+  signal?: AbortSignal
+): Promise<boolean> {
   try {
     const frameResults = await execInAllFrames(
       tabId,
@@ -505,7 +561,7 @@ async function dismissSystemMessagesLog(tabId: number, signal?: AbortSignal): Pr
  * - Sets username & password with input/change events and verifies against showLogonView() resets
  * - Clicks Log On
  */
-async function fillAndSubmitLogonForm(
+export async function fillAndSubmitLogonForm(
   tabId: number,
   cfg: SapEngineConfig,
   signal?: AbortSignal
@@ -836,7 +892,7 @@ async function fillAndSubmitLogonForm(
   );
 }
 
-async function checkAndHandleAuthDialog(
+export async function checkAndHandleAuthDialog(
   tabId: number,
   autoTakeOverSession: boolean,
   signal?: AbortSignal
@@ -916,7 +972,7 @@ async function checkAndHandleAuthDialog(
   return match || { status: 'none' };
 }
 
-async function navigateToStandardModule(
+export async function navigateToStandardModule(
   tabId: number,
   targetModule: Exclude<SapTargetModule, 'HOME' | 'QUERY_PRICELIST'>,
   onProgress: SapProgressCallback,
@@ -1077,160 +1133,20 @@ async function navigateToStandardModule(
 }
 
 /**
- * Automates SAP B1 Browser Access Query Manager -> Execute -> Export Excel (.xlsx)
- * aligned with THAO_TÁC_SAP.pdf and captures the file via chrome.downloads.
+ * Step 1: Opens Query Manager via Toolbar icon (CDP click), Tools -> Queries -> Query Manager,
+ * or Look up menus fallback.
  */
-async function runQueryManagerAndExport(
+export async function openQueryManager(
   tabId: number,
-  category: string,
-  queryName: string,
-  onProgress: SapProgressCallback,
   signal?: AbortSignal
-): Promise<SapAutomationResult> {
-  await reportStatus(tabId, onProgress, 'Đang mở Query Manager trên SAP Business One...', 68);
-
-  // Step 1: Open Query Manager via Toolbar icon, Tools -> Queries -> Query Manager, or Look up menus
+): Promise<boolean> {
   let state = await readSapScreenState(tabId);
-  if (state.screen !== 'QUERY_MANAGER') {
-    const qmResults = await execInAllFrames(
-      tabId,
-      async () => {
-        const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-        const isVisible = (el: Element | null): el is HTMLElement => {
-          if (!el || !(el instanceof HTMLElement)) return false;
-          const style = window.getComputedStyle(el);
-          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-            return false;
-          }
-          const rect = el.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        };
+  if (state.screen === 'QUERY_MANAGER') return true;
 
-        const isQmVisible = () => {
-          const txt = document.body?.innerText || '';
-          return (
-            txt.includes('Query Manager') ||
-            txt.includes('Query Category') ||
-            txt.includes('Manage Categories')
-          );
-        };
-
-        const findVisibleByText = (text: string, exact = false): HTMLElement | null => {
-          const lower = text.toLowerCase();
-          const all = Array.from(
-            document.querySelectorAll('a, button, span, div, li, [role="menuitem"], [role="treeitem"]')
-          ).filter(isVisible);
-          const matches = all.filter((el) => {
-            const t = (el.textContent || '').trim().toLowerCase();
-            return exact ? t === lower : t.includes(lower);
-          });
-          return matches.length > 0 ? matches[matches.length - 1] : null;
-        };
-
-        const clickWithCoords = (el: HTMLElement): TargetCoords => {
-          el.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = el.getBoundingClientRect();
-          const cx = rect.left + rect.width / 2;
-          const cy = rect.top + rect.height / 2;
-          const hit = document.elementFromPoint(cx, cy);
-          const occluded = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el));
-          el.click();
-          return {
-            found: true,
-            occluded,
-            x: cx,
-            y: cy,
-            rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
-          };
-        };
-
-        // 1a. Try Toolbar Query Manager icon first (per THAO_TÁC_SAP.pdf)
-        if (!isQmVisible()) {
-          const iconSelectors = [
-            'button[title*="Query Manager" i]',
-            '[title*="Query Manager" i]',
-            'button[aria-label*="Query Manager" i]',
-            '[data-sap-ui*="query" i]',
-          ];
-          for (const sel of iconSelectors) {
-            const icon = Array.from(document.querySelectorAll(sel)).find(isVisible);
-            if (icon) {
-              const coords = clickWithCoords(icon);
-              await wait(800);
-              if (isQmVisible()) return { opened: true, coords };
-            }
-          }
-        }
-
-        // 1b. Try Tools -> Queries -> Query Manager
-        if (!isQmVisible()) {
-          const tools = findVisibleByText('Tools', true);
-          if (tools) {
-            clickWithCoords(tools);
-            await wait(500);
-            const queries = findVisibleByText('Queries') || findVisibleByText('Query Manager');
-            if (queries) {
-              clickWithCoords(queries);
-              await wait(500);
-            }
-            const qmSub = findVisibleByText('Query Manager');
-            if (qmSub) {
-              const coords = clickWithCoords(qmSub);
-              await wait(800);
-              if (isQmVisible()) return { opened: true, coords };
-            }
-          }
-        }
-
-        // 1c. Fallback: Look up menus
-        if (!isQmVisible()) {
-          const lookup = document.querySelector(
-            'input[placeholder*="Look up menus" i]'
-          ) as HTMLInputElement | null;
-          if (isVisible(lookup) && lookup) {
-            lookup.focus();
-            lookup.value = 'Query Manager';
-            lookup.dispatchEvent(new Event('input', { bubbles: true }));
-            lookup.dispatchEvent(
-              new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })
-            );
-            await wait(1000);
-            const qmResult = findVisibleByText('Query Manager');
-            if (qmResult) {
-              const coords = clickWithCoords(qmResult);
-              await wait(800);
-              return { opened: isQmVisible(), coords };
-            }
-          }
-        }
-
-        return { opened: isQmVisible() };
-      },
-      []
-    );
-
-    const openedEntry = qmResults.map((r) => r.result).find((r) => r?.opened);
-    if (openedEntry?.coords) {
-      await animateTargetClick(tabId, openedEntry.coords, signal);
-    }
-    state = await readSapScreenState(tabId);
-  }
-
-  if (state.screen !== 'QUERY_MANAGER') {
-    return {
-      ok: false,
-      message: 'Đã vào SAP nhưng chưa mở được cửa sổ Query Manager tự động.',
-    };
-  }
-
-  throwIfAborted(signal);
-
-  // Step 2 & 3: Double-click category ("Danh Mục"), scroll & double-click queryName, and click OK
-  await reportStatus(tabId, onProgress, `Đang chọn nhóm "${category}" -> "${queryName}"...`, 75);
-  const selectResults = await execInAllFrames(
+  // 1a. Try Toolbar Query Manager icon first using CDP click
+  const iconHits = await execInAllFrames(
     tabId,
-    async (params: { category: string; queryName: string }) => {
-      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    () => {
       const isVisible = (el: Element | null): el is HTMLElement => {
         if (!el || !(el instanceof HTMLElement)) return false;
         const style = window.getComputedStyle(el);
@@ -1241,71 +1157,845 @@ async function runQueryManagerAndExport(
         return rect.width > 0 && rect.height > 0;
       };
 
-      const findVisibleByText = (text: string): HTMLElement | null => {
-        const lower = text.toLowerCase();
-        const all = Array.from(
-          document.querySelectorAll('td, span, div, li, a, [role="treeitem"], [role="row"]')
-        ).filter(isVisible);
-        const exact = all.filter((el) => (el.textContent || '').trim().toLowerCase() === lower);
-        if (exact.length > 0) return exact[exact.length - 1];
-        const partial = all.filter((el) => (el.textContent || '').toLowerCase().includes(lower));
-        return partial.length > 0 ? partial[partial.length - 1] : null;
-      };
-
-      const dblClickEl = (el: HTMLElement): TargetCoords => {
+      const toTopCoords = (el: HTMLElement): TargetCoords => {
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const rect = el.getBoundingClientRect();
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        const hit = document.elementFromPoint(cx, cy);
+        let offsetX = 0;
+        let offsetY = 0;
+        let win: Window | null = window;
+        while (win && win !== win.top) {
+          try {
+            const fe = win.frameElement as HTMLElement | null;
+            if (!fe) break;
+            const fr = fe.getBoundingClientRect();
+            offsetX += fr.left;
+            offsetY += fr.top;
+            win = win.parent;
+          } catch {
+            break;
+          }
+        }
+        const cx = rect.left + offsetX + rect.width / 2;
+        const cy = rect.top + offsetY + rect.height / 2;
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         const occluded = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el));
-        el.click();
-        el.dispatchEvent(
-          new MouseEvent('dblclick', {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: cx,
-            clientY: cy,
-          })
-        );
         return {
           found: true,
           occluded,
           x: cx,
           y: cy,
-          rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
         };
       };
 
-      const catEl = findVisibleByText(params.category);
-      let catCoords: TargetCoords | undefined;
-      if (catEl) {
-        catCoords = dblClickEl(catEl);
-        await wait(700);
+      const iconSelectors = [
+        'button[title*="Query Manager" i]',
+        '[title*="Query Manager" i]',
+        'button[aria-label*="Query Manager" i]',
+        '[data-sap-ui*="query" i]',
+      ];
+      for (const sel of iconSelectors) {
+        const icon = Array.from(document.querySelectorAll(sel)).find(isVisible);
+        if (icon) {
+          const coords = toTopCoords(icon);
+          return { found: true, coords };
+        }
       }
-
-      const queryEl = findVisibleByText(params.queryName);
-      let queryCoords: TargetCoords | undefined;
-      if (queryEl) {
-        queryCoords = dblClickEl(queryEl);
-        await wait(400);
-      }
-
-      const okBtns = Array.from(document.querySelectorAll('button')).filter(isVisible);
-      const okBtn = okBtns.find((b) => (b.textContent || '').trim().toLowerCase() === 'ok');
-      if (okBtn) {
-        okBtn.click();
-      }
-
-      return { catCoords, queryCoords };
+      return { found: false };
     },
-    [{ category, queryName }]
+    []
   );
 
-  for (const r of selectResults) {
-    if (r.result?.catCoords) await animateTargetClick(tabId, r.result.catCoords, signal);
-    if (r.result?.queryCoords) await animateTargetClick(tabId, r.result.queryCoords, signal);
+  const iconHit = iconHits.map((r) => r.result).find((r) => r?.found && r.coords);
+  if (iconHit?.coords) {
+    const cdpOk = await cdpClickWithVisual(tabId, iconHit.coords, signal);
+    if (!cdpOk) {
+      await execInAllFrames(
+        tabId,
+        () => {
+          const icon = Array.from(
+            document.querySelectorAll(
+              'button[title*="Query Manager" i], [title*="Query Manager" i], button[aria-label*="Query Manager" i], [data-sap-ui*="query" i]'
+            )
+          ).find((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
+          icon?.click();
+        },
+        []
+      );
+    }
+    await sleep(900, signal);
+    state = await readSapScreenState(tabId);
+    if (state.screen === 'QUERY_MANAGER') return true;
+  }
+
+  // 1b. Try Tools -> Queries -> Query Manager (DOM + CDP)
+  const menuRes = await execInAllFrames(
+    tabId,
+    async () => {
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const findVisibleByText = (text: string, exact = false): HTMLElement | null => {
+        const lower = text.toLowerCase();
+        const all = Array.from(
+          document.querySelectorAll('a, button, span, div, li, [role="menuitem"], [role="treeitem"]')
+        ).filter(isVisible);
+        const matches = all.filter((el) => {
+          const t = (el.textContent || '').trim().toLowerCase();
+          return exact ? t === lower : t.includes(lower);
+        });
+        return matches.length > 0 ? matches[matches.length - 1] : null;
+      };
+
+      const tools = findVisibleByText('Tools', true);
+      if (tools) {
+        tools.click();
+        await wait(500);
+        const queries = findVisibleByText('Queries') || findVisibleByText('Query Manager');
+        if (queries) {
+          queries.click();
+          await wait(500);
+        }
+        const qmSub = findVisibleByText('Query Manager');
+        if (qmSub) {
+          qmSub.click();
+          await wait(800);
+          return true;
+        }
+      }
+
+      const lookup = document.querySelector(
+        'input[placeholder*="Look up menus" i]'
+      ) as HTMLInputElement | null;
+      if (isVisible(lookup) && lookup) {
+        lookup.focus();
+        lookup.click();
+        return 'LOOKUP_FOCUSED';
+      }
+      return false;
+    },
+    []
+  );
+
+  if (menuRes.some((r) => r.result === 'LOOKUP_FOCUSED')) {
+    try {
+      await cdpType(tabId, 'Query Manager', { clearFirst: true });
+      await cdpPressKey(tabId, 'Enter');
+    } catch {
+      await execInAllFrames(
+        tabId,
+        () => {
+          const lookup = document.querySelector(
+            'input[placeholder*="Look up menus" i]'
+          ) as HTMLInputElement | null;
+          if (lookup) {
+            lookup.value = 'Query Manager';
+            lookup.dispatchEvent(new Event('input', { bubbles: true }));
+            lookup.dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })
+            );
+          }
+        },
+        []
+      );
+    }
+    await sleep(1000, signal);
+    const clickQm = await execInAllFrames(
+      tabId,
+      () => {
+        const all = Array.from(
+          document.querySelectorAll('a, button, span, div, li, [role="menuitem"], [role="treeitem"]')
+        ).filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
+        const match = all.reverse().find((el) => (el.textContent || '').toLowerCase().includes('query manager'));
+        if (match) {
+          const rect = match.getBoundingClientRect();
+          match.click();
+          return {
+            found: true,
+            occluded: false,
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+            rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+          } satisfies TargetCoords;
+        }
+        return undefined;
+      },
+      []
+    );
+    const coords = clickQm.map((r) => r.result).find((c) => c?.found);
+    if (coords) await cdpClickWithVisual(tabId, coords, signal);
+    await sleep(800, signal);
+  }
+
+  state = await readSapScreenState(tabId);
+  return state.screen === 'QUERY_MANAGER';
+}
+
+/**
+ * Step 2 & 3: In Query Manager, normalizes Vietnamese diacritics (NFD strip),
+ * CDP double-clicks the category folder (e.g. "Danh mục"), scrolls if needed with CDP wheel,
+ * CDP double-clicks the query name, and clicks OK.
+ */
+export async function selectAndExecuteQuery(
+  tabId: number,
+  category: string,
+  queryName: string,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; message?: string }> {
+  const findTargetInFrames = async (targetText: string) => {
+    const res = await execInAllFrames(
+      tabId,
+      (text: string) => {
+        const normalizeText = (s: string) =>
+          s
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/g, 'd')
+            .replace(/Đ/g, 'D')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const isVisible = (el: Element | null): el is HTMLElement => {
+          if (!el || !(el instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return false;
+          }
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        const toTopCoords = (el: HTMLElement): TargetCoords => {
+          el.scrollIntoView({ block: 'center', inline: 'center' });
+          const rect = el.getBoundingClientRect();
+          let offsetX = 0;
+          let offsetY = 0;
+          let win: Window | null = window;
+          while (win && win !== win.top) {
+            try {
+              const fe = win.frameElement as HTMLElement | null;
+              if (!fe) break;
+              const fr = fe.getBoundingClientRect();
+              offsetX += fr.left;
+              offsetY += fr.top;
+              win = win.parent;
+            } catch {
+              break;
+            }
+          }
+          const cx = rect.left + offsetX + rect.width / 2;
+          const cy = rect.top + offsetY + rect.height / 2;
+          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          const occluded = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el));
+          return {
+            found: true,
+            occluded,
+            x: cx,
+            y: cy,
+            rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+          };
+        };
+
+        const normTarget = normalizeText(text);
+        const all = Array.from(
+          document.querySelectorAll('td, span, div, li, a, [role="treeitem"], [role="row"]')
+        ).filter(isVisible);
+
+        const exact = all.filter((el) => normalizeText(el.textContent || '') === normTarget);
+        const match =
+          exact.length > 0
+            ? exact[exact.length - 1]
+            : all.filter((el) => normalizeText(el.textContent || '').includes(normTarget)).pop() || null;
+
+        if (match) {
+          return { found: true, coords: toTopCoords(match) };
+        }
+
+        // Return a scrollable container center for cdpWheel if not found yet
+        const listContainer = Array.from(
+          document.querySelectorAll('.sapUiTable, .sapMList, [role="tree"], [role="grid"], .sapUiTree')
+        ).find(isVisible);
+        if (listContainer) {
+          return { found: false, scrollCoords: toTopCoords(listContainer) };
+        }
+        return { found: false };
+      },
+      [targetText]
+    );
+    return res.map((r) => r.result).filter(Boolean);
+  };
+
+  // 2a. Double-click Category folder ("Danh mục")
+  const catHits = await findTargetInFrames(category);
+  const catHit = catHits.find((r) => r?.found && r.coords);
+  if (catHit?.coords) {
+    const cdpOk = await cdpDoubleClickWithVisual(tabId, catHit.coords, signal);
+    if (!cdpOk) {
+      await execInAllFrames(
+        tabId,
+        (text: string) => {
+          const norm = (s: string) =>
+            s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/\s+/g, ' ').trim();
+          const target = norm(text);
+          const all = Array.from(document.querySelectorAll('td, span, div, li, a, [role="treeitem"], [role="row"]'))
+            .filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
+          const el = all.reverse().find((e) => norm(e.textContent || '').includes(target));
+          if (el) {
+            el.click();
+            el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
+          }
+        },
+        [category]
+      );
+    }
+    await sleep(700, signal);
+  }
+
+  // 2b. Find and double-click Query Name (with CDP wheel scroll fallback)
+  let queryHit: { found: boolean; coords?: TargetCoords; scrollCoords?: TargetCoords } | undefined;
+  for (let scrollAttempt = 0; scrollAttempt < 5; scrollAttempt++) {
+    throwIfAborted(signal);
+    const hits = await findTargetInFrames(queryName);
+    queryHit = hits.find((r) => r?.found && r.coords);
+    if (queryHit?.coords) break;
+
+    const scrollTarget = hits.find((r) => r?.scrollCoords)?.scrollCoords;
+    if (scrollTarget) {
+      await cdpWheel(tabId, scrollTarget.x, scrollTarget.y, 0, 280).catch(() => null);
+      await sleep(350, signal);
+    } else {
+      break;
+    }
+  }
+
+  if (!queryHit?.coords) {
+    return {
+      ok: false,
+      message: `Không tìm thấy truy vấn "${queryName}" trong nhóm "${category}".`,
+    };
+  }
+
+  const queryCdpOk = await cdpDoubleClickWithVisual(tabId, queryHit.coords, signal);
+  if (!queryCdpOk) {
+    await execInAllFrames(
+      tabId,
+      (text: string) => {
+        const norm = (s: string) =>
+          s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/\s+/g, ' ').trim();
+        const target = norm(text);
+        const all = Array.from(document.querySelectorAll('td, span, div, li, a, [role="treeitem"], [role="row"]'))
+          .filter((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
+        const el = all.reverse().find((e) => norm(e.textContent || '').includes(target));
+        if (el) {
+          el.click();
+          el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }));
+        }
+      },
+      [queryName]
+    );
+  }
+  await sleep(400, signal);
+
+  // 2c. Click OK button in Query Manager
+  const okRes = await execInAllFrames(
+    tabId,
+    () => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const okBtn = Array.from(document.querySelectorAll('button')).find(
+        (b) => isVisible(b) && (b.textContent || '').trim().toLowerCase() === 'ok'
+      );
+      if (!okBtn) return undefined;
+      const rect = okBtn.getBoundingClientRect();
+      let offsetX = 0;
+      let offsetY = 0;
+      let win: Window | null = window;
+      while (win && win !== win.top) {
+        try {
+          const fe = win.frameElement as HTMLElement | null;
+          if (!fe) break;
+          const fr = fe.getBoundingClientRect();
+          offsetX += fr.left;
+          offsetY += fr.top;
+          win = win.parent;
+        } catch {
+          break;
+        }
+      }
+      return {
+        found: true,
+        occluded: false,
+        x: rect.left + offsetX + rect.width / 2,
+        y: rect.top + offsetY + rect.height / 2,
+        rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+      } satisfies TargetCoords;
+    },
+    []
+  );
+  const okCoords = okRes.map((r) => r.result).find((c) => c?.found);
+  if (okCoords) {
+    const okCdp = await cdpClickWithVisual(tabId, okCoords, signal);
+    if (!okCdp) {
+      await execInAllFrames(
+        tabId,
+        () => {
+          const okBtn = Array.from(document.querySelectorAll('button')).find(
+            (b) => b.getBoundingClientRect().width > 0 && (b.textContent || '').trim().toLowerCase() === 'ok'
+          );
+          okBtn?.click();
+        },
+        []
+      );
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Step 5: Clicks "Export to MS-EXCEL" on the Query Result screen using CDP click.
+ */
+export async function exportQueryResultToExcel(
+  tabId: number,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const exportHits = await execInAllFrames(
+    tabId,
+    () => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const toTopCoords = (el: HTMLElement): TargetCoords => {
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const rect = el.getBoundingClientRect();
+        let offsetX = 0;
+        let offsetY = 0;
+        let win: Window | null = window;
+        while (win && win !== win.top) {
+          try {
+            const fe = win.frameElement as HTMLElement | null;
+            if (!fe) break;
+            const fr = fe.getBoundingClientRect();
+            offsetX += fr.left;
+            offsetY += fr.top;
+            win = win.parent;
+          } catch {
+            break;
+          }
+        }
+        const cx = rect.left + offsetX + rect.width / 2;
+        const cy = rect.top + offsetY + rect.height / 2;
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        const occluded = Boolean(hit && hit !== el && !el.contains(hit) && !hit.contains(el));
+        return {
+          found: true,
+          occluded,
+          x: cx,
+          y: cy,
+          rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+        };
+      };
+
+      const exportSelectors = [
+        'button[title*="Export to Excel" i]',
+        'button[title*="Export to MS-EXCEL" i]',
+        'button[title*="MS-EXCEL" i]',
+        'button[title*="Export to Spreadsheet" i]',
+        'button[aria-label*="Export to Excel" i]',
+        'button[aria-label*="Export to Spreadsheet" i]',
+        '[title*="Export to MS-EXCEL" i]',
+        '.sapUiTableToolbar button[title*="xls" i]',
+        '[data-action="exportExcel"]',
+      ];
+      for (const sel of exportSelectors) {
+        const btn = Array.from(document.querySelectorAll(sel)).find(isVisible);
+        if (btn) return { found: true, coords: toTopCoords(btn) };
+      }
+
+      const textLabels = ['Export to Excel', 'Export to Spreadsheet', 'Xuất Excel', 'Xuất ra Excel'];
+      const allBtns = Array.from(document.querySelectorAll('button, a, span, div')).filter(isVisible);
+      for (const label of textLabels) {
+        const match = allBtns.find((el) =>
+          (el.textContent || '').toLowerCase().includes(label.toLowerCase())
+        );
+        if (match) return { found: true, coords: toTopCoords(match) };
+      }
+      return { found: false };
+    },
+    []
+  );
+
+  const hit = exportHits.map((r) => r.result).find((r) => r?.found && r.coords);
+  if (!hit?.coords) return false;
+
+  const cdpOk = await cdpClickWithVisual(tabId, hit.coords, signal);
+  if (!cdpOk) {
+    await execInAllFrames(
+      tabId,
+      () => {
+        const btn = Array.from(
+          document.querySelectorAll(
+            'button[title*="Export to Excel" i], button[title*="MS-EXCEL" i], [title*="Export to MS-EXCEL" i], button[title*="Export to Spreadsheet" i], [data-action="exportExcel"]'
+          )
+        ).find((el): el is HTMLElement => el instanceof HTMLElement && el.getBoundingClientRect().width > 0);
+        btn?.click();
+      },
+      []
+    );
+  }
+  await sleep(1200, signal);
+  return true;
+}
+
+/**
+ * Step 6: Selects `.xlsx` in the Save As dialog (supporting both native `<select>` and
+ * SAP UI5 custom combobox/select dropdowns via CDP click) and clicks OK.
+ */
+export async function confirmSaveAsXlsxDialog(
+  tabId: number,
+  signal?: AbortSignal
+): Promise<boolean> {
+  // First try native <select> or locate custom SAP UI5 dropdown coords
+  const dropdownRes = await execInAllFrames(
+    tabId,
+    () => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const toTopCoords = (el: HTMLElement): TargetCoords => {
+        const rect = el.getBoundingClientRect();
+        let offsetX = 0;
+        let offsetY = 0;
+        let win: Window | null = window;
+        while (win && win !== win.top) {
+          try {
+            const fe = win.frameElement as HTMLElement | null;
+            if (!fe) break;
+            const fr = fe.getBoundingClientRect();
+            offsetX += fr.left;
+            offsetY += fr.top;
+            win = win.parent;
+          } catch {
+            break;
+          }
+        }
+        return {
+          found: true,
+          occluded: false,
+          x: rect.left + offsetX + rect.width / 2,
+          y: rect.top + offsetY + rect.height / 2,
+          rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+        };
+      };
+
+      const dialogs = Array.from(
+        document.querySelectorAll('.sapMDialog, #messagebox, [role="dialog"], .dialog, .b1-dialog')
+      ).filter(isVisible);
+      const scope: ParentNode = dialogs[0] || document;
+      const bodyText = document.body?.innerText || '';
+      if (!/Save As|Enter a file name/i.test(bodyText) && dialogs.length === 0) {
+        return { active: false };
+      }
+
+      // Native <select>
+      const selects = Array.from(scope.querySelectorAll('select')).filter(isVisible);
+      for (const sel of selects as HTMLSelectElement[]) {
+        for (let i = 0; i < sel.options.length; i++) {
+          const opt = sel.options[i];
+          const txt = (opt.textContent || opt.text || '').toLowerCase();
+          const val = (opt.value || '').toLowerCase();
+          if (txt.includes('xlsx') || val.includes('xlsx')) {
+            sel.selectedIndex = i;
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            return { active: true, selectedNative: true };
+          }
+        }
+      }
+
+      // SAP UI5 / custom combobox dropdown
+      const combo = Array.from(
+        scope.querySelectorAll('[role="combobox"], .sapMSlt, .sapMSelect, .sapUiTfCombo, .sapMSltArrow')
+      ).find(isVisible);
+      if (combo) {
+        return { active: true, selectedNative: false, comboCoords: toTopCoords(combo) };
+      }
+
+      return { active: true, selectedNative: false };
+    },
+    []
+  );
+
+  const activeEntry = dropdownRes.map((r) => r.result).find((r) => r?.active);
+  if (!activeEntry) return false;
+
+  if (!activeEntry.selectedNative && activeEntry.comboCoords) {
+    await cdpClickWithVisual(tabId, activeEntry.comboCoords, signal);
+    await sleep(350, signal);
+
+    const optRes = await execInAllFrames(
+      tabId,
+      () => {
+        const isVisible = (el: Element | null): el is HTMLElement => {
+          if (!el || !(el instanceof HTMLElement)) return false;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return false;
+          }
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+        const options = Array.from(
+          document.querySelectorAll('[role="option"], .sapMSelectListItem, .sapUiLbI, li')
+        ).filter(isVisible);
+        const xlsxOpt = options.find((o) => (o.textContent || '').toLowerCase().includes('xlsx'));
+        if (!xlsxOpt) return undefined;
+        const rect = xlsxOpt.getBoundingClientRect();
+        let offsetX = 0;
+        let offsetY = 0;
+        let win: Window | null = window;
+        while (win && win !== win.top) {
+          try {
+            const fe = win.frameElement as HTMLElement | null;
+            if (!fe) break;
+            const fr = fe.getBoundingClientRect();
+            offsetX += fr.left;
+            offsetY += fr.top;
+            win = win.parent;
+          } catch {
+            break;
+          }
+        }
+        return {
+          found: true,
+          occluded: false,
+          x: rect.left + offsetX + rect.width / 2,
+          y: rect.top + offsetY + rect.height / 2,
+          rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+        } satisfies TargetCoords;
+      },
+      []
+    );
+
+    const optCoords = optRes.map((r) => r.result).find((c) => c?.found);
+    if (optCoords) {
+      const clicked = await cdpClickWithVisual(tabId, optCoords, signal);
+      if (!clicked) {
+        await execInAllFrames(
+          tabId,
+          () => {
+            const opt = Array.from(
+              document.querySelectorAll('[role="option"], .sapMSelectListItem, .sapUiLbI, li')
+            ).find(
+              (o): o is HTMLElement =>
+                o instanceof HTMLElement &&
+                o.getBoundingClientRect().width > 0 &&
+                (o.textContent || '').toLowerCase().includes('xlsx')
+            );
+            opt?.click();
+          },
+          []
+        );
+      }
+      await sleep(300, signal);
+    }
+  }
+
+  // Click OK in Save As dialog
+  const okRes = await execInAllFrames(
+    tabId,
+    () => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const dialogs = Array.from(
+        document.querySelectorAll('.sapMDialog, #messagebox, [role="dialog"], .dialog, .b1-dialog')
+      ).filter(isVisible);
+      const scope: ParentNode = dialogs[0] || document;
+      const okBtn = Array.from(scope.querySelectorAll('button')).find(
+        (b) => isVisible(b) && (b.textContent || '').trim().toLowerCase() === 'ok'
+      );
+      if (!okBtn) return undefined;
+      const rect = okBtn.getBoundingClientRect();
+      let offsetX = 0;
+      let offsetY = 0;
+      let win: Window | null = window;
+      while (win && win !== win.top) {
+        try {
+          const fe = win.frameElement as HTMLElement | null;
+          if (!fe) break;
+          const fr = fe.getBoundingClientRect();
+          offsetX += fr.left;
+          offsetY += fr.top;
+          win = win.parent;
+        } catch {
+          break;
+        }
+      }
+      return {
+        found: true,
+        occluded: false,
+        x: rect.left + offsetX + rect.width / 2,
+        y: rect.top + offsetY + rect.height / 2,
+        rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+      } satisfies TargetCoords;
+    },
+    []
+  );
+
+  const okCoords = okRes.map((r) => r.result).find((c) => c?.found);
+  if (okCoords) {
+    const clicked = await cdpClickWithVisual(tabId, okCoords, signal);
+    if (!clicked) {
+      await execInAllFrames(
+        tabId,
+        () => {
+          const okBtn = Array.from(document.querySelectorAll('button')).find(
+            (b) => b.getBoundingClientRect().width > 0 && (b.textContent || '').trim().toLowerCase() === 'ok'
+          );
+          okBtn?.click();
+        },
+        []
+      );
+    }
+    await sleep(800, signal);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Step 7: Confirms the "Export currency symbols?" dialog via CDP click.
+ */
+export async function confirmCurrencyDialog(
+  tabId: number,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const okRes = await execInAllFrames(
+    tabId,
+    () => {
+      const isVisible = (el: Element | null): el is HTMLElement => {
+        if (!el || !(el instanceof HTMLElement)) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      if (!/Export currency symbols/i.test(document.body?.innerText || '')) return undefined;
+      const dialogs = Array.from(
+        document.querySelectorAll('.sapMDialog, #messagebox, [role="dialog"], .dialog, .b1-dialog')
+      ).filter(isVisible);
+      const scope: ParentNode = dialogs[0] || document;
+      const okBtn = Array.from(scope.querySelectorAll('button')).find(
+        (b) => isVisible(b) && /^(ok|yes|có)$/i.test((b.textContent || '').trim())
+      );
+      if (!okBtn) return undefined;
+      const rect = okBtn.getBoundingClientRect();
+      let offsetX = 0;
+      let offsetY = 0;
+      let win: Window | null = window;
+      while (win && win !== win.top) {
+        try {
+          const fe = win.frameElement as HTMLElement | null;
+          if (!fe) break;
+          const fr = fe.getBoundingClientRect();
+          offsetX += fr.left;
+          offsetY += fr.top;
+          win = win.parent;
+        } catch {
+          break;
+        }
+      }
+      return {
+        found: true,
+        occluded: false,
+        x: rect.left + offsetX + rect.width / 2,
+        y: rect.top + offsetY + rect.height / 2,
+        rect: { x: rect.left + offsetX, y: rect.top + offsetY, width: rect.width, height: rect.height },
+      } satisfies TargetCoords;
+    },
+    []
+  );
+
+  const okCoords = okRes.map((r) => r.result).find((c) => c?.found);
+  if (!okCoords) return false;
+
+  const clicked = await cdpClickWithVisual(tabId, okCoords, signal);
+  if (!clicked) {
+    await execInAllFrames(
+      tabId,
+      () => {
+        const okBtn = Array.from(document.querySelectorAll('button')).find(
+          (b) => b.getBoundingClientRect().width > 0 && /^(ok|yes|có)$/i.test((b.textContent || '').trim())
+        );
+        okBtn?.click();
+      },
+      []
+    );
+  }
+  return true;
+}
+
+/**
+ * Automates SAP B1 Browser Access Query Manager -> Execute -> Export Excel (.xlsx)
+ * aligned with THAO_TÁC_SAP.pdf and captures the file via chrome.downloads.
+ */
+export async function runQueryManagerAndExport(
+  tabId: number,
+  category: string,
+  queryName: string,
+  onProgress: SapProgressCallback,
+  signal?: AbortSignal
+): Promise<SapAutomationResult> {
+  await reportStatus(tabId, onProgress, 'Đang mở Query Manager trên SAP Business One...', 68);
+
+  // Step 1: Open Query Manager
+  const opened = await openQueryManager(tabId, signal);
+  if (!opened) {
+    return {
+      ok: false,
+      message: 'Đã vào SAP nhưng chưa mở được cửa sổ Query Manager tự động.',
+    };
+  }
+
+  throwIfAborted(signal);
+
+  // Step 2 & 3: Double-click category ("Danh mục"), scroll & double-click queryName, and click OK
+  await reportStatus(tabId, onProgress, `Đang chọn nhóm "${category}" -> "${queryName}"...`, 75);
+  const selectRes = await selectAndExecuteQuery(tabId, category, queryName, signal);
+  if (!selectRes.ok) {
+    return {
+      ok: false,
+      message: selectRes.message || `Không chọn được truy vấn "${queryName}".`,
+    };
   }
 
   // Step 4: Wait for query results table to populate via real-time screen reader
@@ -1317,7 +2007,7 @@ async function runQueryManagerAndExport(
   );
   for (let qWait = 0; qWait < 12; qWait++) {
     await sleep(500, signal);
-    state = await readSapScreenState(tabId);
+    const state = await readSapScreenState(tabId);
     if (state.screen === 'QUERY_RESULT' && !state.isLoading) break;
   }
 
@@ -1372,91 +2062,13 @@ async function runQueryManagerAndExport(
   try {
     // Step 5: Trigger "Export to MS-EXCEL"
     await reportStatus(tabId, onProgress, 'Đang nhấn Export to MS-EXCEL...', 88);
-    const exportFrameResults = await execInAllFrames(
-      tabId,
-      async () => {
-        const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-        const isVisible = (el: Element | null): el is HTMLElement => {
-          if (!el || !(el instanceof HTMLElement)) return false;
-          const style = window.getComputedStyle(el);
-          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-            return false;
-          }
-          const rect = el.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        };
-
-        const clickExport = (btn: HTMLElement): TargetCoords => {
-          btn.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = btn.getBoundingClientRect();
-          const cx = rect.left + rect.width / 2;
-          const cy = rect.top + rect.height / 2;
-          const hit = document.elementFromPoint(cx, cy);
-          const occluded = Boolean(hit && hit !== btn && !btn.contains(hit) && !hit.contains(btn));
-          btn.click();
-          return {
-            found: true,
-            occluded,
-            x: cx,
-            y: cy,
-            rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
-          };
-        };
-
-        const exportSelectors = [
-          'button[title*="Export to Excel" i]',
-          'button[title*="Export to MS-EXCEL" i]',
-          'button[title*="MS-EXCEL" i]',
-          'button[title*="Export to Spreadsheet" i]',
-          'button[aria-label*="Export to Excel" i]',
-          'button[aria-label*="Export to Spreadsheet" i]',
-          '[title*="Export to MS-EXCEL" i]',
-          '.sapUiTableToolbar button[title*="xls" i]',
-          '[data-action="exportExcel"]',
-        ];
-
-        for (const sel of exportSelectors) {
-          const btn = Array.from(document.querySelectorAll(sel)).find(isVisible);
-          if (btn) {
-            const coords = clickExport(btn);
-            await wait(1500);
-            return { clicked: true, coords };
-          }
-        }
-
-        const textLabels = [
-          'Export to Excel',
-          'Export to Spreadsheet',
-          'Xuất Excel',
-          'Xuất ra Excel',
-        ];
-        const allBtns = Array.from(document.querySelectorAll('button, a, span, div')).filter(
-          isVisible
-        );
-        for (const label of textLabels) {
-          const match = allBtns.find((el) =>
-            (el.textContent || '').toLowerCase().includes(label.toLowerCase())
-          );
-          if (match) {
-            const coords = clickExport(match);
-            await wait(1500);
-            return { clicked: true, coords };
-          }
-        }
-
-        return { clicked: false };
-      },
-      []
-    );
-
-    const exportHit = exportFrameResults.map((r) => r.result).find((r) => r?.clicked);
-    if (!exportHit) {
+    const exportClicked = await exportQueryResultToExcel(tabId, signal);
+    if (!exportClicked) {
       return {
         ok: false,
         message: `Đã mở bảng kết quả "${queryName}" nhưng chưa tìm thấy nút Export to MS-EXCEL.`,
       };
     }
-    await animateTargetClick(tabId, exportHit.coords, signal);
 
     // Step 6 & 7: Confirm "Save As" (.xlsx format + OK) and "Export currency symbols?" dialogs
     await reportStatus(
@@ -1466,71 +2078,9 @@ async function runQueryManagerAndExport(
       92
     );
     await sleep(800, signal);
-    await execInAllFrames(
-      tabId,
-      async () => {
-        const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-        const isVisible = (el: Element | null): el is HTMLElement => {
-          if (!el || !(el instanceof HTMLElement)) return false;
-          const style = window.getComputedStyle(el);
-          if (style.display === 'none' || style.visibility === 'hidden') return false;
-          const rect = el.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
-        };
-
-        const getActiveDialog = (): ParentNode => {
-          const dialogs = Array.from(
-            document.querySelectorAll(
-              '.sapMDialog, #messagebox, [role="dialog"], .dialog, .b1-dialog'
-            )
-          ).filter(isVisible);
-          return dialogs[0] || document;
-        };
-
-        const selectXlsxFormatIfPresent = (scope: ParentNode) => {
-          const selects = Array.from(scope.querySelectorAll('select')).filter(isVisible);
-          for (const sel of selects as HTMLSelectElement[]) {
-            for (let i = 0; i < sel.options.length; i++) {
-              const opt = sel.options[i];
-              const txt = (opt.textContent || opt.text || '').toLowerCase();
-              const val = (opt.value || '').toLowerCase();
-              if (txt.includes('xlsx') || val.includes('xlsx')) {
-                sel.selectedIndex = i;
-                sel.value = opt.value;
-                sel.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
-              }
-            }
-          }
-          return false;
-        };
-
-        const clickOkButton = () => {
-          const scope = getActiveDialog();
-          const okBtn = Array.from(scope.querySelectorAll('button')).find(
-            (b) => isVisible(b) && (b.textContent || '').trim().toLowerCase() === 'ok'
-          );
-          if (okBtn) {
-            okBtn.click();
-            return true;
-          }
-          return false;
-        };
-
-        const bodyText = document.body?.innerText || '';
-        if (bodyText.includes('Save As') || bodyText.includes('Enter a file name')) {
-          selectXlsxFormatIfPresent(getActiveDialog());
-          await wait(300);
-          clickOkButton();
-          await wait(800);
-        }
-
-        if ((document.body?.innerText || '').includes('Export currency symbols')) {
-          clickOkButton();
-        }
-      },
-      []
-    );
+    await confirmSaveAsXlsxDialog(tabId, signal);
+    await sleep(600, signal);
+    await confirmCurrencyDialog(tabId, signal);
 
     // Step 8: Wait for chrome.downloads completion (up to 35s)
     await reportStatus(
@@ -1618,6 +2168,7 @@ export async function runSapAutomation(
 
   try {
     await injectCursorOverlay(tabId);
+    await cdpAttach(tabId).catch(() => false);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       throwIfAborted(signal);
@@ -1869,6 +2420,7 @@ export async function runSapAutomation(
       message: `Lỗi tự động hóa SAP: ${(err as Error).message}`,
     };
   } finally {
+    await cdpDetach(tabId).catch(() => null);
     await removeCursorOverlay(tabId).catch(() => null);
   }
 }
@@ -1892,7 +2444,7 @@ async function handleTargetModule(
 
   if (targetModule === 'QUERY_PRICELIST') {
     const category = cfg.queryCategory || 'Danh Mục';
-    const queryName = cfg.queryName || 'Danh sách item ncc pricelist_non_Asset';
+    const queryName = cfg.queryName || 'Danh sach item ncc pricelist_non_Asset';
     return await runQueryManagerAndExport(tabId, category, queryName, onProgress, signal);
   }
 

@@ -4,6 +4,7 @@
 // ============================================================
 
 import { injectCursorOverlay, cursorAction, removeCursorOverlay, type ElementRect } from './cursor-overlay';
+import type { WeekConvention } from '../types';
 
 export type PosScreenName =
   | 'LOGIN'
@@ -33,10 +34,16 @@ export interface PosEngineConfig {
   preferredOutlet?: string;
   fromDate?: string;
   toDate?: string;
+  weekConvention?: WeekConvention;
   storeFilter?: string;
   slocFilter?: string;
   itemFilter?: string;
   fileNameTemplate?: string;
+}
+
+export interface PosDateRange {
+  fromDate: string;
+  toDate: string;
 }
 
 export type PosProgressCallback = (step: string, percent: number) => void;
@@ -148,12 +155,43 @@ async function execMain<Args extends unknown[], Result>(
   return results?.[0]?.result;
 }
 
-function normalizePosBaseUrl(rawUrl: string): string {
+export function normalizePosBaseUrl(rawUrl: string): string {
   const clean = (rawUrl || '').trim().replace(/\/(home|login)\/?$/i, '');
   if (!clean) {
     throw new Error('POS URL is not configured.');
   }
   return clean.endsWith('/') ? clean : `${clean}/`;
+}
+
+export function formatDateYmd(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Compute previous week's [fromDate, toDate] (YYYY-MM-DD) for the given convention:
+ * - 'mon-sun' (T2-CN): previous Monday through Sunday
+ * - 'sun-sat' (CN-T7): previous Sunday through Saturday
+ */
+export function getPreviousWeekRange(
+  weekConvention: WeekConvention = 'mon-sun',
+  referenceDate: Date = new Date()
+): PosDateRange {
+  const today = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const dayOfWeek = today.getDay();
+  if (weekConvention === 'sun-sat') {
+    const prevSunday = new Date(today);
+    prevSunday.setDate(today.getDate() - dayOfWeek - 7);
+    const prevSaturday = new Date(prevSunday);
+    prevSaturday.setDate(prevSunday.getDate() + 6);
+    return { fromDate: formatDateYmd(prevSunday), toDate: formatDateYmd(prevSaturday) };
+  }
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  const prevMonday = new Date(today);
+  prevMonday.setDate(today.getDate() - daysSinceMonday - 7);
+  const prevSunday = new Date(prevMonday);
+  prevSunday.setDate(prevMonday.getDate() + 6);
+  return { fromDate: formatDateYmd(prevMonday), toDate: formatDateYmd(prevSunday) };
 }
 
 export function parseFilterValues(raw?: string | string[]): string[] {
@@ -183,7 +221,7 @@ export function resolveColumnIdentifiers(columnField: string): { dataField: stri
   return { dataField: columnField, titles: [columnField] };
 }
 
-function resolveFilename(template: string, vars: Record<string, string>): string {
+export function resolveFilename(template: string, vars: Record<string, string>): string {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -219,17 +257,6 @@ async function navigateAndWait(
     if (tab?.status === 'complete') {
       break;
     }
-  }
-  // Wait up to 5s for header filter popup to appear
-  for (let w = 0; w < 16; w++) {
-    await sleep(300, signal);
-    const popupVisible = await execMain(tabId, (): boolean => {
-      const popup = document.querySelector('.dx-header-filter-menu, .dx-overlay-content .dx-popup-content') as HTMLElement | null;
-      if (!popup) return false;
-      const r = popup.getBoundingClientRect();
-      return r.width > 0 && r.height > 0;
-    });
-    if (popupVisible) break;
   }
   await injectCursorOverlay(tabId);
 }
@@ -600,7 +627,7 @@ async function isPOSAuthenticated(tabId: number): Promise<boolean> {
   return hasAdminOrShop || Boolean(domState?.hasIndicator);
 }
 
-async function waitForLoadingWaveToEnd(
+export async function waitForLoadingWaveToEnd(
   tabId: number,
   timeoutMs = 30000,
   signal?: AbortSignal
@@ -619,6 +646,7 @@ async function waitForLoadingWaveToEnd(
         '.dx-loadindicator',
         '.loading-wave',
         '[class*="wave"]',
+        '.dx-export-loadpanel',
         '.dx-overlay-wrapper .dx-loadpanel-content',
       ];
       for (const sel of waveSelectors) {
@@ -636,9 +664,9 @@ async function waitForLoadingWaveToEnd(
         const isVisible = (el: Element): boolean => {
           const r = (el as HTMLElement).getBoundingClientRect();
           const st = window.getComputedStyle(el);
-          return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+          return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0' && r.width > 0 && r.height > 0;
         };
-        if (Array.from(document.querySelectorAll('.dx-loadpanel, .dx-loadindicator, .loading-wave')).some(isVisible)) {
+        if (Array.from(document.querySelectorAll('.dx-loadpanel, .dx-loadindicator, .loading-wave, .dx-export-loadpanel')).some(isVisible)) {
           return true;
         }
         return Array.from(document.querySelectorAll('button, dx-button')).some(
@@ -717,7 +745,7 @@ async function selectOutletAndWaitSettlement(
   return isPOSAuthenticated(tabId);
 }
 
-async function ensureAuthenticated(
+export async function ensureAuthenticated(
   tabId: number,
   cfg: PosEngineConfig,
   onProgress: PosProgressCallback,
@@ -891,7 +919,7 @@ async function ensureAuthenticated(
   throw new Error(`Không thể đăng nhập POS sau ${maxRetries} lần thử.`);
 }
 
-async function navigateToReport(
+export async function navigateToReport(
   tabId: number,
   reportName: 'Inventory Onhand' | 'Sales Transaction Detail',
   fallbackPath: string,
@@ -970,7 +998,7 @@ async function navigateToReport(
   await sleep(1800, signal);
 }
 
-async function setDateFilter(tabId: number, field: 'from' | 'to', isoDate: string): Promise<void> {
+export async function setDateFilter(tabId: number, field: 'from' | 'to', isoDate: string): Promise<void> {
   const parts = isoDate.split('-').map(Number);
   if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return;
   const [year, month, day] = parts;
@@ -1018,7 +1046,7 @@ async function setDateFilter(tabId: number, field: 'from' | 'to', isoDate: strin
   );
 }
 
-async function setStoreFilter(tabId: number, storeFilter: string, signal?: AbortSignal): Promise<void> {
+export async function setStoreFilter(tabId: number, storeFilter: string, signal?: AbortSignal): Promise<void> {
   if (!storeFilter || storeFilter.toLowerCase() === 'all') return;
   const opened = await visualClickElement(tabId, ['dx-select-box', '.dx-selectbox'], undefined, 'Store Filter', signal);
   if (!opened) return;
@@ -1032,7 +1060,7 @@ async function setStoreFilter(tabId: number, storeFilter: string, signal?: Abort
   await sleep(250, signal);
 }
 
-async function isGridPopulated(tabId: number): Promise<boolean> {
+export async function isGridPopulated(tabId: number): Promise<boolean> {
   const populated = await execMain(tabId, (): boolean => {
     const isVisible = (el: Element): boolean => {
       const r = (el as HTMLElement).getBoundingClientRect();
@@ -1047,7 +1075,7 @@ async function isGridPopulated(tabId: number): Promise<boolean> {
   return Boolean(populated);
 }
 
-async function setGridFilter(
+export async function setGridFilter(
   tabId: number,
   columnField: string,
   value: string | string[],
@@ -1308,7 +1336,43 @@ async function waitForDownloadComplete(downloadId: number, timeoutMs = 20000, si
   return null;
 }
 
-async function triggerExportAndCapture(
+export const POS_LOADING_WAIT_TIMEOUT_MS = 720000;
+
+export const POS_SALES_EXPORT_SELECTORS = [
+  '.dx-datagrid-header-panel .dx-datagrid-export-button',
+  '.dx-datagrid-header-panel .dx-button:has(.dx-icon-xlsxfile)',
+  '.dx-datagrid-header-panel [aria-label*="Export to Excel" i]',
+  '.dx-datagrid-export-button',
+  '.btn-excel',
+];
+
+export const POS_INVENTORY_EXPORT_SELECTORS = [
+  '.dx-datagrid-header-panel .dx-datagrid-export-button',
+  '.dx-datagrid-header-panel .dx-button:has(.dx-icon-xlsxfile)',
+  '.dx-datagrid-header-panel [aria-label*="Export to Excel" i]',
+  '.dx-datagrid-export-button',
+  '.dx-button:has(.dx-icon-xlsxfile)',
+];
+
+export async function triggerPosSearch(
+  tabId: number,
+  label = 'Search',
+  signal?: AbortSignal
+): Promise<boolean> {
+  return visualClickElement(
+    tabId,
+    ['dx-button[icon="search"]', '.btn-search', 'button[type="submit"]', 'button', 'a'],
+    ['Search'],
+    label,
+    signal
+  );
+}
+
+export async function cleanupPosOverlay(tabId: number): Promise<void> {
+  await removeCursorOverlay(tabId);
+}
+
+export async function triggerExportAndCapture(
   tabId: number,
   buttonSelectors: string[],
   fallbackTextMatches: string[] | undefined,
@@ -1433,9 +1497,13 @@ export async function runPosSalesDownload(
       await navigateToReport(tabId, 'Sales Transaction Detail', 'admin/report/sales-transaction-detail', baseUrl, onProgress, signal);
     }
 
+    const fallbackWeek = !cfg.fromDate || !cfg.toDate ? getPreviousWeekRange(cfg.weekConvention ?? 'mon-sun') : null;
+    const effectiveFromDate = cfg.fromDate || fallbackWeek?.fromDate;
+    const effectiveToDate = cfg.toDate || fallbackWeek?.toDate;
+
     onProgress('Đang thiết lập bộ lọc ngày và cửa hàng...', 52);
-    if (cfg.fromDate) await setDateFilter(tabId, 'from', cfg.fromDate);
-    if (cfg.toDate) await setDateFilter(tabId, 'to', cfg.toDate);
+    if (effectiveFromDate) await setDateFilter(tabId, 'from', effectiveFromDate);
+    if (effectiveToDate) await setDateFilter(tabId, 'to', effectiveToDate);
 
     const parsedStores = parseFilterValues(cfg.storeFilter);
     if (parsedStores.length === 1) {
@@ -1444,8 +1512,8 @@ export async function runPosSalesDownload(
 
     onProgress('Đang tải dữ liệu Sales Transaction Detail...', 60);
     for (let sAttempt = 1; sAttempt <= 3; sAttempt++) {
-      await visualClickElement(tabId, ['dx-button[icon="search"]', 'button[type="submit"]', 'button', 'a'], ['Search'], `Search (${sAttempt}/3)`, signal);
-      await waitForLoadingWaveToEnd(tabId, 120000, signal);
+      await triggerPosSearch(tabId, `Search (${sAttempt}/3)`, signal);
+      await waitForLoadingWaveToEnd(tabId, POS_LOADING_WAIT_TIMEOUT_MS, signal);
       await sleep(1200, signal);
       const stateAfterSearch = await readPosScreenState(tabId);
       if (!stateAfterSearch.isLoading && stateAfterSearch.gridRowCount > 0) break;
@@ -1461,21 +1529,15 @@ export async function runPosSalesDownload(
 
     const storeLabel = parsedStores.length === 0 ? 'ALL' : parsedStores.length === 1 ? parsedStores[0] : `${parsedStores.length}STORES`;
     const filename = resolveFilename(cfg.fileNameTemplate || 'Sales_{{fromDate}}_{{toDate}}.xlsx', {
-      fromDate: cfg.fromDate || 'ALL',
-      toDate: cfg.toDate || 'ALL',
+      fromDate: effectiveFromDate || 'ALL',
+      toDate: effectiveToDate || 'ALL',
       storeId: storeLabel,
     });
 
     onProgress('Đang xuất file Excel Sales Transaction Detail...', 85);
     const capture = await triggerExportAndCapture(
       tabId,
-      [
-        '.dx-datagrid-header-panel .dx-datagrid-export-button',
-        '.dx-datagrid-header-panel .dx-button:has(.dx-icon-xlsxfile)',
-        '.dx-datagrid-header-panel [aria-label*="Export to Excel" i]',
-        '.dx-datagrid-export-button',
-        '.btn-excel',
-      ],
+      POS_SALES_EXPORT_SELECTORS,
       ['Excel'],
       filename,
       signal
@@ -1529,15 +1591,15 @@ export async function runPosInventoryDownload(
     }
 
     onProgress('Đang chờ Inventory Onhand tải dữ liệu...', 52);
-    await waitForLoadingWaveToEnd(tabId, 30000, signal);
+    await waitForLoadingWaveToEnd(tabId, POS_LOADING_WAIT_TIMEOUT_MS, signal);
     await sleep(2000, signal);
 
     let populated = await isGridPopulated(tabId);
     if (!populated) {
       for (let sAttempt = 1; sAttempt <= 6; sAttempt++) {
         onProgress(`Đang truy vấn Inventory Onhand (Lần ${sAttempt}/6)...`, 54 + sAttempt * 3);
-        await visualClickElement(tabId, ['dx-button[icon="search"]', '.btn-search', 'button[type="submit"]', 'button'], ['Search'], `Search (${sAttempt}/6)`, signal);
-        await waitForLoadingWaveToEnd(tabId, 90000, signal);
+        await triggerPosSearch(tabId, `Search (${sAttempt}/6)`, signal);
+        await waitForLoadingWaveToEnd(tabId, POS_LOADING_WAIT_TIMEOUT_MS, signal);
         await sleep(2500, signal);
         populated = await isGridPopulated(tabId);
         if (populated) break;
@@ -1565,13 +1627,7 @@ export async function runPosInventoryDownload(
     onProgress('Đang xuất file Excel Inventory Onhand...', 88);
     const capture = await triggerExportAndCapture(
       tabId,
-      [
-        '.dx-datagrid-header-panel .dx-datagrid-export-button',
-        '.dx-datagrid-header-panel .dx-button:has(.dx-icon-xlsxfile)',
-        '.dx-datagrid-header-panel [aria-label*="Export to Excel" i]',
-        '.dx-datagrid-export-button',
-        '.dx-button:has(.dx-icon-xlsxfile)',
-      ],
+      POS_INVENTORY_EXPORT_SELECTORS,
       undefined,
       filename,
       signal

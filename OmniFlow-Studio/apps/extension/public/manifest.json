@@ -33,7 +33,8 @@
     "sidePanel",
     "tabs",
     "alarms",
-    "downloads"
+    "downloads",
+    "debugger"
   ],
   "host_permissions": [
     "http://172.16.1.200/*",

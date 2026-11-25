@@ -1,10 +1,24 @@
-import { DEFAULT_CONFIG, ExtensionConfig, ExtensionLogEntry, DownloadHistoryItem } from '../types.js';
+import { DEFAULT_CONFIG, ExtensionConfig, ExtensionLogEntry, DownloadHistoryItem, WorkflowType } from '../types.js';
 
 const STORAGE_KEYS = {
   CONFIG: 'omniflow_config',
   LOGS: 'omniflow_logs',
   DOWNLOADS: 'omniflow_downloads',
+  CHECKPOINT: 'omniflow_workflow_checkpoint',
 };
+
+export interface WorkflowCheckpoint {
+  runId: string;
+  workflowType: WorkflowType;
+  stage: string;
+  stepIndex: number;
+  totalSteps: number;
+  percent: number;
+  tabId?: number;
+  lastScreen?: string;
+  completedStages?: string[];
+  updatedAt: string;
+}
 
 export async function getConfig(): Promise<ExtensionConfig> {
   try {
@@ -88,5 +102,35 @@ export async function recordDownload(item: DownloadHistoryItem): Promise<void> {
     await chrome.storage.local.set({ [STORAGE_KEYS.DOWNLOADS]: updated });
   } catch (err) {
     console.warn('[OmniFlow Storage] Failed to record download:', err);
+  }
+}
+
+export async function saveCheckpoint(checkpoint: WorkflowCheckpoint): Promise<void> {
+  try {
+    if (chrome.storage.session) {
+      await chrome.storage.session.set({ [STORAGE_KEYS.CHECKPOINT]: checkpoint });
+    }
+  } catch (err) {
+    console.warn('[OmniFlow Storage] Failed to save checkpoint:', err);
+  }
+}
+
+export async function getCheckpoint(): Promise<WorkflowCheckpoint | null> {
+  try {
+    if (!chrome.storage.session) return null;
+    const res = await chrome.storage.session.get(STORAGE_KEYS.CHECKPOINT);
+    return (res[STORAGE_KEYS.CHECKPOINT] as WorkflowCheckpoint | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearCheckpoint(): Promise<void> {
+  try {
+    if (chrome.storage.session) {
+      await chrome.storage.session.remove(STORAGE_KEYS.CHECKPOINT);
+    }
+  } catch (err) {
+    console.warn('[OmniFlow Storage] Failed to clear checkpoint:', err);
   }
 }

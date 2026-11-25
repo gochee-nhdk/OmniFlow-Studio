@@ -15,24 +15,23 @@ import {
 } from '../types.js';
 import {
   appendLog,
+  clearCheckpoint,
   clearLogs,
+  getCheckpoint,
   getConfig,
   getDownloads,
   getLogs,
   recordDownload,
+  saveCheckpoint,
   saveConfig,
 } from '../shared/storage.js';
+import { PosEngineConfig } from '../engines/pos-engine.js';
+import { SapEngineConfig, SapTargetModule } from '../engines/sap-engine.js';
 import {
-  PosEngineConfig,
-  runPosCheckLogin,
-  runPosInventoryDownload,
-  runPosSalesDownload,
-} from '../engines/pos-engine.js';
-import {
-  runSapAutomation,
-  SapEngineConfig,
-  SapTargetModule,
-} from '../engines/sap-engine.js';
+  routePosLoginCheck,
+  routePosReportDownload,
+  routeSapAutomation,
+} from '../engines/screen-router.js';
 import { removeCursorOverlay } from '../engines/cursor-overlay.js';
 import { actOnPage, inspectPage } from '../engines/browser-agent.js';
 
@@ -274,12 +273,16 @@ function resolveDates(cfg: ExtensionConfig, params: Record<string, any> = {}): {
   }
   if (rule === 'PREVIOUS_WEEK') {
     const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const daysSinceMonday = (todayDate.getDay() + 6) % 7;
-    const monday = new Date(todayDate);
-    monday.setDate(todayDate.getDate() - daysSinceMonday - 7);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    return { fromDate: formatDateYmd(monday), toDate: formatDateYmd(sunday) };
+    const convention = params.weekConvention || cfg.weekConvention || 'mon-sun';
+    const daysSinceWeekStart =
+      convention === 'sun-sat'
+        ? todayDate.getDay()
+        : (todayDate.getDay() + 6) % 7;
+    const start = new Date(todayDate);
+    start.setDate(todayDate.getDate() - daysSinceWeekStart - 7);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { fromDate: formatDateYmd(start), toDate: formatDateYmd(end) };
   }
   if (rule === 'CUSTOM') {
     return {
@@ -305,6 +308,7 @@ function buildPosEngineConfig(cfg: ExtensionConfig, params: Record<string, any> 
     preferredOutlet: params.outlet || cfg.posPreferredOutlet || 'FM04',
     fromDate,
     toDate,
+    weekConvention: params.weekConvention || cfg.weekConvention || 'mon-sun',
     storeFilter: params.storeFilter || cfg.posPreferredOutlet || 'FM04',
     slocFilter: slocs.join(','),
     itemFilter: params.itemFilter ?? cfg.posItemFilter ?? '',
@@ -450,8 +454,18 @@ function emitProgress(
 
   if (status === 'RUNNING' || status === 'INITIALIZING') {
     updateBadge('RUNNING', `${clamped}%`);
+    void saveCheckpoint({
+      runId,
+      workflowType,
+      stage: step,
+      stepIndex: stepIndex ?? 0,
+      totalSteps: totalSteps ?? 5,
+      percent: clamped,
+      updatedAt: new Date().toISOString(),
+    });
   } else {
     updateBadge('READY');
+    void clearCheckpoint();
   }
 
   broadcast('WORKFLOW_PROGRESS', currentProgress);
@@ -481,11 +495,12 @@ async function executeWorkflowAsync(
     if (workflowType === 'POS_LOGIN_CHECK') {
       emitProgress(runId, workflowType, 'Mở trang POS RPFO...', 5, 'RUNNING', 1, 3);
       const tabId = await findOrOpenTab(cfg.posUrl);
-      const res = await runPosCheckLogin(
+      const res = await routePosLoginCheck(
         tabId,
         buildPosEngineConfig(cfg, params),
         (step, pct) => emitProgress(runId, workflowType, step, pct, 'RUNNING', 2, 3),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!res.ok) throw new Error(res.message);
       emitProgress(runId, workflowType, res.message, 100, 'SUCCESS', 3, 3, res.message);
@@ -498,11 +513,13 @@ async function executeWorkflowAsync(
     if (workflowType === 'DOWNLOAD_SALES') {
       emitProgress(runId, workflowType, 'Mở trang POS RPFO...', 5, 'RUNNING', 1, 3);
       const tabId = await findOrOpenTab(cfg.posUrl);
-      const res = await runPosSalesDownload(
+      const res = await routePosReportDownload(
         tabId,
+        'SALES',
         buildPosEngineConfig(cfg, params),
         (step, pct) => emitProgress(runId, workflowType, step, pct, 'RUNNING', 2, 3),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!res.ok) throw new Error(res.message);
       await saveRecordedDownload(res.downloadId, res.filename, 'SALES', 'SUCCESS');
@@ -516,11 +533,13 @@ async function executeWorkflowAsync(
     if (workflowType === 'DOWNLOAD_INVENTORY') {
       emitProgress(runId, workflowType, 'Mở trang POS RPFO...', 5, 'RUNNING', 1, 3);
       const tabId = await findOrOpenTab(cfg.posUrl);
-      const res = await runPosInventoryDownload(
+      const res = await routePosReportDownload(
         tabId,
+        'INVENTORY',
         buildPosEngineConfig(cfg, params),
         (step, pct) => emitProgress(runId, workflowType, step, pct, 'RUNNING', 2, 3),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!res.ok) throw new Error(res.message);
       await saveRecordedDownload(res.downloadId, res.filename, 'INVENTORY', 'SUCCESS');
@@ -536,20 +555,24 @@ async function executeWorkflowAsync(
       emitProgress(runId, workflowType, 'Mở trang POS RPFO...', 5, 'RUNNING', 1, 4);
       const tabId = await findOrOpenTab(cfg.posUrl);
 
-      const salesRes = await runPosSalesDownload(
+      const salesRes = await routePosReportDownload(
         tabId,
+        'SALES',
         posCfg,
         (step, pct) => emitProgress(runId, workflowType, `[Doanh số] ${step}`, 5 + pct * 0.45, 'RUNNING', 2, 4),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!salesRes.ok) throw new Error(salesRes.message);
       await saveRecordedDownload(salesRes.downloadId, salesRes.filename, 'SALES', 'SUCCESS');
 
-      const invRes = await runPosInventoryDownload(
+      const invRes = await routePosReportDownload(
         tabId,
+        'INVENTORY',
         posCfg,
         (step, pct) => emitProgress(runId, workflowType, `[Tồn kho] ${step}`, 50 + pct * 0.48, 'RUNNING', 3, 4),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!invRes.ok) throw new Error(invRes.message);
       await saveRecordedDownload(invRes.downloadId, invRes.filename, 'INVENTORY', 'SUCCESS');
@@ -564,11 +587,16 @@ async function executeWorkflowAsync(
     if (workflowType === 'SAP_AUTOMATION' || workflowType === 'SAP_LOGIN_CHECK') {
       emitProgress(runId, workflowType, 'Mở trang SAP Business One...', 5, 'RUNNING', 1, 3);
       const tabId = await findOrOpenTab(cfg.sapUrl);
-      const res = await runSapAutomation(
+      const sapCfg = buildSapEngineConfig(cfg, params);
+      if (workflowType === 'SAP_LOGIN_CHECK') {
+        sapCfg.targetModule = 'HOME';
+      }
+      const res = await routeSapAutomation(
         tabId,
-        buildSapEngineConfig(cfg, params),
+        sapCfg,
         (step, pct) => emitProgress(runId, workflowType, step, pct, 'RUNNING', 2, 3),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!res.ok) throw new Error(res.message);
       if (res.filename || res.downloadId != null) {
@@ -588,32 +616,37 @@ async function executeWorkflowAsync(
       emitProgress(runId, workflowType, 'Bước 1/3: Mở POS & tải Doanh số...', 2, 'RUNNING', 1, 5);
       const posTabId = await findOrOpenTab(cfg.posUrl);
 
-      const salesRes = await runPosSalesDownload(
+      const salesRes = await routePosReportDownload(
         posTabId,
+        'SALES',
         posCfg,
         (step, pct) => emitProgress(runId, workflowType, `[1/3 Doanh số] ${step}`, 2 + pct * 0.33, 'RUNNING', 2, 5),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!salesRes.ok) throw new Error(`POS Sales thất bại: ${salesRes.message}`);
       await saveRecordedDownload(salesRes.downloadId, salesRes.filename, 'SALES', 'SUCCESS');
 
       emitProgress(runId, workflowType, 'Bước 2/3: Tải Tồn kho POS (12 Kho)...', 35, 'RUNNING', 3, 5);
-      const invRes = await runPosInventoryDownload(
+      const invRes = await routePosReportDownload(
         posTabId,
+        'INVENTORY',
         posCfg,
         (step, pct) => emitProgress(runId, workflowType, `[2/3 Tồn kho] ${step}`, 35 + pct * 0.35, 'RUNNING', 3, 5),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!invRes.ok) throw new Error(`POS Inventory thất bại: ${invRes.message}`);
       await saveRecordedDownload(invRes.downloadId, invRes.filename, 'INVENTORY', 'SUCCESS');
 
       emitProgress(runId, workflowType, 'Bước 3/3: Mở SAP B1 & xuất Price List...', 70, 'RUNNING', 4, 5);
       const sapTabId = await findOrOpenTab(cfg.sapUrl);
-      const sapRes = await runSapAutomation(
+      const sapRes = await routeSapAutomation(
         sapTabId,
         sapCfg,
         (step, pct) => emitProgress(runId, workflowType, `[3/3 SAP B1] ${step}`, 70 + pct * 0.29, 'RUNNING', 4, 5),
-        signal
+        signal,
+        { geminiApiKey: cfg.geminiApiKey }
       );
       if (!sapRes.ok) throw new Error(`SAP Automation thất bại: ${sapRes.message}`);
       if (sapRes.filename || sapRes.downloadId != null) {
@@ -850,6 +883,28 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 });
 
 // ============================================================
+// MV3 Keep-Alive Port Listener (prevents SW idle during 6-12m waits)
+// ============================================================
+const keepAlivePorts = new Set<chrome.runtime.Port>();
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'omniflow-keepalive') return;
+  keepAlivePorts.add(port);
+  port.onMessage.addListener((msg) => {
+    if (msg?.type === 'PING') {
+      try {
+        port.postMessage({ type: 'PONG', ts: Date.now() });
+      } catch {
+        // Ignore closed port
+      }
+    }
+  });
+  port.onDisconnect.addListener(() => {
+    keepAlivePorts.delete(port);
+  });
+});
+
+// ============================================================
 // Periodic Ping Alarm & Startup
 // ============================================================
 function setupPingAlarm(intervalSec = 30) {
@@ -867,6 +922,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   currentConfig = await getConfig();
   updateBadge('READY');
   setupPingAlarm(currentConfig.pingIntervalSec);
+  const lastCheckpoint = await getCheckpoint();
+  if (lastCheckpoint && !activeAbortController) {
+    await logEvent(
+      'warn',
+      `Phát hiện checkpoint gián đoạn (${lastCheckpoint.workflowType} @ ${lastCheckpoint.percent}% - ${lastCheckpoint.stage}). Đã dọn dẹp trạng thái.`,
+      'background'
+    );
+    await clearCheckpoint();
+  }
   await logEvent('info', 'OmniFlow Studio Standalone Extension v2.1.0 đã sẵn sàng.', 'background');
   await checkNetworkPings();
 })();

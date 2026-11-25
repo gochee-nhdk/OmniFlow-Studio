@@ -316,6 +316,14 @@
             <input type="text" id="cfgPosItemFilter" class="form-control" placeholder="Để trống = tất cả">
           </div>
         </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgWeekConvention">Quy ước tuần (Tuần trước)</label>
+          <select id="cfgWeekConvention" class="form-control">
+            <option value="mon-sun">Thứ Hai – Chủ nhật (T2–CN)</option>
+            <option value="sun-sat">Chủ nhật – Thứ Bảy (CN–T7)</option>
+          </select>
+        </div>
       </div>
 
       <!-- SAP Card -->
@@ -363,6 +371,27 @@
           <input type="checkbox" id="cfgAutoTakeOverSession" checked>
           <span>Tự động tiếp quản phiên SAP nếu trùng phiên</span>
         </label>
+      </div>
+
+      <!-- AI / VLM Fallback Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">AI Vision Fallback (Gemini)</span>
+          <span class="badge-muted">Tùy chọn</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfgGeminiApiKey">Gemini API Key</label>
+          <div class="input-with-eye">
+            <input type="password" id="cfgGeminiApiKey" class="form-control" placeholder="AIza... (dùng khi UI thay đổi / popup lạ)">
+            <button type="button" class="eye-btn" data-target="cfgGeminiApiKey" title="Hiện / Ẩn API Key" aria-label="Hiện hoặc ẩn Gemini API Key">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Sticky Settings Footer -->

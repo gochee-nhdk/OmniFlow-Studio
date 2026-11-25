@@ -28,6 +28,8 @@ export type WorkflowStatus =
 
 export type DateRule = 'TODAY' | 'YESTERDAY' | 'PREVIOUS_WEEK' | 'CUSTOM';
 
+export type WeekConvention = 'sun-sat' | 'mon-sun';
+
 export interface WorkflowProgress {
   runId?: string;
   workflowType?: WorkflowType | string;
@@ -107,9 +109,11 @@ export interface ExtensionConfig {
   sapTargetModule: string;
   autoTakeOverSession: boolean;
   dateRule: DateRule;
+  weekConvention: WeekConvention;
   customFromDate?: string;
   customToDate?: string;
   pingIntervalSec: number;
+  geminiApiKey: string;
 }
 
 export const DEFAULT_CONFIG: ExtensionConfig = {
@@ -128,7 +132,9 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
   sapTargetModule: 'Price Lists',
   autoTakeOverSession: true,
   dateRule: 'TODAY',
+  weekConvention: 'mon-sun',
   pingIntervalSec: 30,
+  geminiApiKey: '',
 };
 
 // RPC Messages between content script/popup/sidepanel and background

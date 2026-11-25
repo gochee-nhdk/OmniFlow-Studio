@@ -5,6 +5,7 @@ import {
   ExtensionConfig,
   ExtensionLogEntry,
   POS_12_SLOCS,
+  WeekConvention,
   WorkflowProgress,
   WorkflowType,
 } from '../types.js';
@@ -70,6 +71,7 @@ const cfgPosUsername = document.getElementById('cfgPosUsername') as HTMLInputEle
 const cfgPosPassword = document.getElementById('cfgPosPassword') as HTMLInputElement;
 const cfgPosPreferredOutlet = document.getElementById('cfgPosPreferredOutlet') as HTMLInputElement;
 const cfgPosItemFilter = document.getElementById('cfgPosItemFilter') as HTMLInputElement;
+const cfgWeekConvention = document.getElementById('cfgWeekConvention') as HTMLSelectElement;
 
 const cfgSapUrl = document.getElementById('cfgSapUrl') as HTMLInputElement;
 const cfgSapUsername = document.getElementById('cfgSapUsername') as HTMLInputElement;
@@ -77,6 +79,7 @@ const cfgSapPassword = document.getElementById('cfgSapPassword') as HTMLInputEle
 const cfgSapCompany = document.getElementById('cfgSapCompany') as HTMLInputElement;
 const cfgSapTargetModule = document.getElementById('cfgSapTargetModule') as HTMLInputElement;
 const cfgAutoTakeOverSession = document.getElementById('cfgAutoTakeOverSession') as HTMLInputElement;
+const cfgGeminiApiKey = document.getElementById('cfgGeminiApiKey') as HTMLInputElement;
 
 const configSavedNotice = document.getElementById('configSavedNotice')!;
 const btnSaveConfig = document.getElementById('btnSaveConfig')!;
@@ -287,7 +290,7 @@ async function persistSlocState() {
   try {
     await chrome.runtime.sendMessage({
       action: 'SAVE_CONFIG',
-      payload: {
+      config: {
         availableSlocs: availableSlocsList,
         posSlocFilter: getSelectedSlocs(),
       },
@@ -384,15 +387,71 @@ function getSelectedSlocs(): string[] {
 }
 
 // ============================================================
+// MV3 Service Worker Keep-Alive Port
+// ============================================================
+let keepAlivePort: chrome.runtime.Port | null = null;
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+let isWorkflowActive = false;
+
+function startKeepAlivePort() {
+  isWorkflowActive = true;
+  if (keepAlivePort) return;
+  try {
+    keepAlivePort = chrome.runtime.connect({ name: 'omniflow-keepalive' });
+    keepAlivePort.onDisconnect.addListener(() => {
+      keepAlivePort = null;
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+      if (isWorkflowActive) {
+        setTimeout(() => {
+          if (isWorkflowActive) startKeepAlivePort();
+        }, 1000);
+      }
+    });
+    if (!keepAliveTimer) {
+      keepAliveTimer = setInterval(() => {
+        try {
+          keepAlivePort?.postMessage({ type: 'PING', ts: Date.now() });
+        } catch {
+          // Port disconnected; onDisconnect will handle reconnect if active
+        }
+      }, 20000);
+    }
+  } catch {
+    keepAlivePort = null;
+  }
+}
+
+function stopKeepAlivePort() {
+  isWorkflowActive = false;
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+  if (keepAlivePort) {
+    try {
+      keepAlivePort.disconnect();
+    } catch {
+      // Ignore
+    }
+    keepAlivePort = null;
+  }
+}
+
+// ============================================================
 // Stepper & Status Badge Updates
 // ============================================================
 function updateStatusBadge(isRunning = false) {
   if (isRunning) {
     sideStatusBadge.className = 'status-badge running';
     sideStatusText.textContent = 'Đang chạy...';
+    startKeepAlivePort();
   } else {
     sideStatusBadge.className = 'status-badge online';
     sideStatusText.textContent = 'Sẵn sàng';
+    stopKeepAlivePort();
   }
 }
 
@@ -676,6 +735,7 @@ function applyConfigToForm(c: ExtensionConfig) {
   cfgPosPassword.value = c.posPassword || '';
   cfgPosPreferredOutlet.value = c.posPreferredOutlet || DEFAULT_CONFIG.posPreferredOutlet;
   cfgPosItemFilter.value = c.posItemFilter || '';
+  cfgWeekConvention.value = c.weekConvention || DEFAULT_CONFIG.weekConvention;
 
   cfgSapUrl.value = c.sapUrl || DEFAULT_CONFIG.sapUrl;
   cfgSapUsername.value = c.sapUsername || DEFAULT_CONFIG.sapUsername;
@@ -683,6 +743,15 @@ function applyConfigToForm(c: ExtensionConfig) {
   cfgSapCompany.value = c.sapCompany || DEFAULT_CONFIG.sapCompany;
   cfgSapTargetModule.value = c.sapTargetModule || DEFAULT_CONFIG.sapTargetModule;
   cfgAutoTakeOverSession.checked = c.autoTakeOverSession ?? DEFAULT_CONFIG.autoTakeOverSession;
+  cfgGeminiApiKey.value = c.geminiApiKey || '';
+
+  const prevWeekOption = selectDateRule.querySelector('option[value="PREVIOUS_WEEK"]');
+  if (prevWeekOption) {
+    prevWeekOption.textContent =
+      cfgWeekConvention.value === 'sun-sat'
+        ? 'Tuần trước (Chủ nhật - Thứ Bảy)'
+        : 'Tuần trước (Thứ Hai - Chủ nhật)';
+  }
 
   inputOutlet.value = c.posPreferredOutlet || DEFAULT_CONFIG.posPreferredOutlet;
   selectDateRule.value = c.dateRule || DEFAULT_CONFIG.dateRule;
@@ -724,6 +793,7 @@ btnSaveConfig.addEventListener('click', async () => {
     posPassword: cfgPosPassword.value,
     posPreferredOutlet: cfgPosPreferredOutlet.value.trim() || DEFAULT_CONFIG.posPreferredOutlet,
     posItemFilter: cfgPosItemFilter.value.trim(),
+    weekConvention: (cfgWeekConvention.value as WeekConvention) || DEFAULT_CONFIG.weekConvention,
     availableSlocs: availableSlocsList,
     posSlocFilter: getSelectedSlocs(),
     sapUrl: cfgSapUrl.value.trim() || DEFAULT_CONFIG.sapUrl,
@@ -732,6 +802,7 @@ btnSaveConfig.addEventListener('click', async () => {
     sapCompany: cfgSapCompany.value.trim() || DEFAULT_CONFIG.sapCompany,
     sapTargetModule: cfgSapTargetModule.value.trim() || DEFAULT_CONFIG.sapTargetModule,
     autoTakeOverSession: cfgAutoTakeOverSession.checked,
+    geminiApiKey: cfgGeminiApiKey.value.trim(),
     dateRule: selectDateRule.value as DateRule,
     customFromDate: inputFromDate.value || undefined,
     customToDate: inputToDate.value || undefined,
